@@ -14,11 +14,11 @@ import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai
 
 ## 修正包
 
-`1.6.1-fork.4fb2cc977.1` 把主包实际顶层引用、而档案 lock 原先没装的三份库写成 dependencies，版本钉在构建用的 `0.2.1-rc.3`：
+`1.6.1-fork.4fb2cc977.1` 把主包顶层引用写成 dependencies，版本钉在构建用的 `0.2.1-rc.3`。
 
-- `@deepseek-ai/dsh-subagent`
-- `@deepseek-ai/dsh-tool-bash`
-- `@deepseek-ai/dsh-tool-pwsh`
+实际写入 dependencies 的是 8 个，不只下面曾经点名的 3 个：`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、`dsh-subagent`、`dsh-tool-bash`、`dsh-tool-pwsh`、`dsh-tools`。交付目录 `closure/` 有这 8 个 registry tarball，sha512 与 lock 一致。peer 不在其中。13 个产品包加这 8 个文件不是离线整包。
+
+在独立 DSH `0.2.2-alpha.2` 上，Host 加载 Core 时这 8 个解析到档案里的 `0.2.1-rc.3`，DSH 自己的安装树是 `0.2.2-alpha.2`。`SessionId` 运行时是原字符串，两边 Map 能对上。同一进程的 `bot-sessions` 和 `bot-tool pack_catalog` 都退出码 0。没有会话身份异常，所以没有改解析器。
 
 不要改 DSH 版本，也不要另装 latest。来源提交 `4fb2cc9774ec248b799ce2984c0bce4648bb0726`。Core SHA256：`ce203c63900b889778300243a5b5e836f69a2e43ff372e7940812c745d8ff5b5`。交付目录 `tobs-fork-4fb2cc977`。
 
