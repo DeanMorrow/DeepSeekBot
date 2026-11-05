@@ -361,12 +361,36 @@ describe('super-agent contract', () => {
     const status = inspectBot(imported);
     expect(status).toMatchObject({
       equipped: true,
+      adaptation: 'discipline-only',
+      fullBundleInstalled: false,
       officialInstalled: false,
       officialPackage: 'deepseek-ai/dsh-superagent-prototype',
+      sourceCommit: '6337fc823ce20251c8de8085948165c81aaa701e',
+      githubSource: false,
+      feishuSource: false,
+      autoMerge: false,
+      presetReplaced: false,
       invocation: 'untested',
       inheritsPrivateMemory: false,
+      entry: 'node bin/adapt.mjs super-agent-plan',
+    });
+    expect(status.notEquivalentTo).toEqual(['bot_subagent', 'oar', 'agent-teams']);
+    expect(status.host).toMatchObject({
+      declared: '^0.2.1-alpha.2',
+      example: '0.2.1-rc.3',
+      local: '0.2.2-alpha.2',
+      localTested: false,
     });
     expect(status.forbiddenOnOrchestrator).toContain('bot_subagent');
+    writeFileSync(
+      join(imported, '.botharness/super-agent.json'),
+      JSON.stringify({
+        role: 'super-agent-contract',
+        officialInstalled: true,
+        fullBundleInstalled: true,
+      }),
+    );
+    expect(inspectBot(imported).equipped).toBe(false);
     rmSync(join(imported, '.botharness/super-agent.json'));
     rmSync(join(imported, '.dsh/skills/super-agent'), { recursive: true });
     writeFileSync(join(imported, 'SOUL.md'), '本 Bot 已启用 super-agent');
@@ -413,8 +437,21 @@ describe('super-agent contract', () => {
       reason: 'needs-delivery-gate',
       callIds: ['assign-1'],
     });
+    const reported = JSON.parse(
+      execFileSync(process.execPath, [cli, 'super-agent-status', '--target', importedStatusDir()], {
+        encoding: 'utf8',
+      }),
+    );
+    expect(reported.bot.fullBundleInstalled).toBe(false);
+    expect(reported.bot.adaptation).toBe('discipline-only');
   });
 });
+
+function importedStatusDir() {
+  const dir = temp('status-');
+  cpSync(seed, dir, { recursive: true });
+  return dir;
+}
 
 describe('production write checkpoint', () => {
   it('accepts only the explicit confirmations', () => {

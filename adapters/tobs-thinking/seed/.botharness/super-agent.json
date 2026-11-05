@@ -1,12 +1,22 @@
 {
   "version": 1,
   "role": "super-agent-contract",
+  "adaptation": "discipline-only",
   "officialPackage": "deepseek-ai/dsh-superagent-prototype",
+  "sourceCommit": "6337fc823ce20251c8de8085948165c81aaa701e",
+  "license": "MIT",
+  "tag": "unknown",
   "officialInstalled": false,
-  "conflict": "dedicated-profile-and-unapproved-os-commands",
+  "fullBundleInstalled": false,
+  "githubSource": false,
+  "feishuSource": false,
+  "autoMerge": false,
+  "presetReplaced": false,
+  "conflict": "dedicated-profile-danger-full-access-and-process-path",
   "parentTool": "create_assignment",
   "forbiddenOnOrchestrator": ["bot_subagent", "subagent", "subagent_fork"],
   "limits": { "maxDepth": 2, "maxConcurrent": 2, "maxSubtasks": 3, "maxBudget": 3 },
   "childPermission": "assignment-grant-only",
-  "inheritsPrivateMemory": false
+  "inheritsPrivateMemory": false,
+  "approval": "tobs-existing-grant-and-explicit-production-confirm"
 }

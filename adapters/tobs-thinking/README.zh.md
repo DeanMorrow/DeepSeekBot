@@ -17,17 +17,15 @@
 
 ## super-agent
 
-每个新种子都带 `.botharness/super-agent.json` 和技能 `super-agent`。指定的旧 Bot 在上面的迁移里会一并补上。只有灵魂里写了这个词，不算配上。
+准确来源是 `deepseek-ai/dsh-superagent-prototype` 的提交 `6337fc823ce20251c8de8085948165c81aaa701e`（MIT，tag 未知）。该提交的 README 把它写成 DeepSeek Harness 的 bundle 研究原型。部署文档的安装是：单独的 `superagent` 档案、`pnpm build`、再 `dsh plugin --profile superagent add "link:…"`。`package.json` 声明宿主 `^0.2.1-alpha.2`，文档例子是 `0.2.1-rc.3`。本机 `0.2.2-alpha.2` 没有按这条路径实测。
 
-对照过的候选：
+同一部署文档写明：`dsh-superagent-router` 和 `dsh-superagent-worker` 以 `danger-full-access` 运行，插件改进程 PATH 和 git。授权文档管允许名单和 Mandate。执行文档管 Ticket、工人槽位和汇总。飞书源默认在补丁里关掉，但整包仍包含它。这些都不是往记忆里放一个 `SKILL.md` 就能装上的。
 
-- 要的是 `deepseek-ai/dsh-superagent-prototype`。它是 MIT 研究原型，单独的 DSH 档案，自带 router / worker 预设，看一个 GitHub 仓库，工人命令默认不再次审批，并改进程 PATH 和 git。官方要求不要和日常档案混用。
-- 不是商业 SuperAGI，也不是某一个 Bot 人设。
-- Tobs 预设里的 `bot_subagent` 只在派工会话里可用。编排会话会被现成守卫拦住，必须改走 `create_assignment`。有这个工具，不等于每个 Bot 已经启用官方 super-agent。
+不能把每个 Tobs Bot 的预设改成 router 或 worker，否则会换掉现有 Bot 配置、审批和目录权限。`bot_subagent`、本仓库没有的 oar、以及 Agent Teams，都不是这个原型。
 
-两者抢执行核，也会把权限放大。所以官方包没有安装，`officialInstalled` 保持 false。契约只允许深度 2、同时 2 个、一共 3 次，子任务不继承私有记录。没有真实调用编号，就不能写成已经调用。
+因此这里没有安装整包，也没有接 GitHub、飞书、Panel 或自动合并。每个新种子和被点名迁移的旧 Bot 只带一份纪律入口：`node bin/adapt.mjs super-agent-plan`。状态命令必须报 `adaptation: discipline-only` 和 `fullBundleInstalled: false`。限额是深度 2、同时 2 个、一共 3 次。子任务不继承私有记录，审批仍用 Tobs 现有的工作区授权和写生产代码前的明确确认。
 
-本环境没有活 Bot。种子里的「思考基线」只有契约，没有调用证据。别的 Bot 在迁移之前都没有这份契约。
+本环境没有活 Bot。种子「思考基线」有入口，没有真实调用编号。未迁移的 Bot 没有这份入口。
 
 ## 安装一个新 Bot
 

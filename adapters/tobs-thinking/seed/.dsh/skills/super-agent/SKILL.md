@@ -1,25 +1,19 @@
 ---
 name: super-agent
-description: 每个 Bot 都要带的规划与子任务契约。官方 dsh-superagent 原型没有装进本 Bot。编排会话用已有的 create_assignment，不把 subagent 工具当成已经启用。
-whenToUse: 要把一件事拆开、交给独立子任务、再汇总结果时加载。不要用它声称官方 super-agent 包已经安装。
+description: 每个 Bot 的规划与子任务入口。只借鉴官方原型的限额和审批边界，不是 dsh-superagent 整包，也不切换 Bot 预设。
+whenToUse: 要把一件事拆开并交给有限的子任务时加载。不要用它接 GitHub 或飞书，也不要声称原型已经安装。
 ---
 
-# super-agent 契约
+# 只借鉴纪律，不是整包
 
-用户要的是 DeepSeek 开源的 `deepseek-ai/dsh-superagent-prototype`（MIT，研究原型，不是正式产品）。它不是商业 SuperAGI，也不是某一个 Bot 人设。
+准确来源是 `deepseek-ai/dsh-superagent-prototype`，提交 `6337fc823ce20251c8de8085948165c81aaa701e`，MIT，tag 未知。它在该提交的 README 里写明是 DeepSeek Harness 的 bundle 研究原型，不是正式产品，也不是一份技能文件。
 
-那个原型是单独的 DSH 档案包：自己的 `dsh-superagent-router` 和 `dsh-superagent-worker`，看一个 GitHub 仓库，工人会话以操作系统用户身份跑命令且默认不再次审批，还会改进程里的 PATH 和 git。官方说明要求放在独立档案，不要和日常档案混用。
+该提交的部署文档要求：单独的 `superagent` 档案、先构建、再用 `dsh plugin --profile superagent add "link:…"` 接上。`package.json` 声明宿主 `^0.2.1-alpha.2`，例子是 `0.2.1-rc.3`。本机 `0.2.2-alpha.2` 没有按这条路径实测。
 
-Tobs 的 Bot 预设已经换成自己的执行方式：编排会话禁止直接启动 `bot_subagent` / `subagent`，要拆工作必须用 `create_assignment`。子任务只在派工会话里才能再开。仓库里有这些工具，不等于每个 Bot 已经启用官方 super-agent。
+同一文档写明：`dsh-superagent-router` 和 `dsh-superagent-worker` 以 `danger-full-access` 用操作系统用户跑，插件还会改进程 PATH 和 git。授权文档管的是谁可以开工、Mandate 和策略版本。执行文档管的是 Ticket、工人槽位和汇总。这些都依赖那套 bundle。
 
-所以本文件只记录契约，`officialInstalled` 固定为 false。不要改 Bot 的执行核，也不要把它的权限放大到不审批。
+本 Bot 没有安装那套 bundle，也没有把预设改成 router 或 worker。仓库里的 `bot_subagent`、本仓库未提供的 oar、以及 Agent Teams，都不是这个原型。把 `SKILL.md` 放进记忆，不等于装完。
 
-## 能做的
+这里只留下规划纪律：入口是 `node bin/adapt.mjs super-agent-plan`。一次最多 3 段，深度最多 2，同时最多 2 个，总共最多 3 次。子任务不继承私有记录，仍走 Tobs 现有的工作区授权和写生产代码前的明确确认。不接 GitHub，不接飞书，不打开 Panel，不自动合并。
 
-用 `node bin/adapt.mjs super-agent-plan --task "..."` 把任务拆成最多 3 段。深度最多 2，同时最多 2 个，总共最多 3 次调用。再深就拒绝，避免无限往下派。
-
-真正开工时，编排会话只调用已有的 `create_assignment`。子任务只拿这次授权的工作区，不继承私有复盘。没有返回调用编号，就不能写成已经调用。
-
-汇总之后仍要走 delivery-gate。子任务跑完不等于审查通过。
-
-活 Host 上还要用 `bot-tools` 看 `create_assignment` 是否真的在目录里，并留下一次真实调用编号。没有编号，这份 Bot 的调用证据就是未测。
+`node bin/adapt.mjs super-agent-status` 必须显示 `fullBundleInstalled: false` 和 `adaptation: discipline-only`。没有真实调用编号时，调用证据是未测。

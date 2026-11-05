@@ -1,13 +1,23 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Official research prototype. Not SuperAGI, and not a Tobs persona. */
+/** Pinned research prototype. A skill file does not install this bundle. */
+export const SOURCE_COMMIT = '6337fc823ce20251c8de8085948165c81aaa701e';
+
 export const OFFICIAL_SUPER_AGENT = {
   repository: 'deepseek-ai/dsh-superagent-prototype',
+  commit: SOURCE_COMMIT,
+  tag: 'unknown',
   license: 'MIT',
-  kind: 'dedicated-dsh-profile-bundle',
+  packageName: 'dsh-superagent',
+  packageVersion: '0.1.0',
+  kind: 'dsh-bundle',
+  enginesDsh: '^0.2.1-alpha.2',
+  documentedExampleHost: '0.2.1-rc.3',
   routerPreset: 'dsh-superagent-router',
   workerPreset: 'dsh-superagent-worker',
+  workerPermission: 'danger-full-access',
+  install: 'dedicated-profile-plus-build-plus-link-plugin',
   installedHere: false,
 };
 
@@ -27,7 +37,19 @@ export function readManifest(botDir) {
   const path = join(botDir, MANIFEST_PATH);
   if (!existsSync(path)) return undefined;
   const value = JSON.parse(readFileSync(path, 'utf8'));
-  if (value?.role !== 'super-agent-contract' || value.officialInstalled !== false) return undefined;
+  if (
+    value?.role !== 'super-agent-contract' ||
+    value.officialInstalled !== false ||
+    value.fullBundleInstalled !== false ||
+    value.adaptation !== 'discipline-only' ||
+    value.sourceCommit !== SOURCE_COMMIT ||
+    value.githubSource !== false ||
+    value.feishuSource !== false ||
+    value.autoMerge !== false ||
+    value.presetReplaced !== false
+  ) {
+    return undefined;
+  }
   return value;
 }
 
@@ -44,7 +66,22 @@ export function inspectBot(botDir, liveCalls = []) {
     botDir,
     equipped: Boolean(manifest && skill),
     officialPackage: OFFICIAL_SUPER_AGENT.repository,
+    sourceCommit: manifest?.sourceCommit ?? null,
+    adaptation: manifest?.adaptation ?? null,
+    fullBundleInstalled: false,
     officialInstalled: false,
+    githubSource: false,
+    feishuSource: false,
+    autoMerge: false,
+    presetReplaced: false,
+    notEquivalentTo: ['bot_subagent', 'oar', 'agent-teams'],
+    host: {
+      declared: OFFICIAL_SUPER_AGENT.enginesDsh,
+      example: OFFICIAL_SUPER_AGENT.documentedExampleHost,
+      local: '0.2.2-alpha.2',
+      localTested: false,
+    },
+    entry: manifest && skill ? 'node bin/adapt.mjs super-agent-plan' : null,
     soulAlone: false,
     parentTool: manifest?.parentTool ?? null,
     forbiddenOnOrchestrator: manifest ? ORCHESTRATOR_FORBIDDEN : [],
