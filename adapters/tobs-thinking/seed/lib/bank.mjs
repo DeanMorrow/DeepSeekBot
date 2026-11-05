@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { hostBot } from './identity.mjs';
+
 const PRIVATE_MARKERS = ['[private-chat]', 'BEGIN PRIVATE', '私聊原文'];
 
 export function emptyBank() {
@@ -24,14 +26,18 @@ function cleanLesson(lesson) {
 }
 
 export function addPrivate(bank, input) {
+  const identity = hostBot(input.identity);
+  if (!identity.ok) return identity;
+  if (input.ownerBotId !== undefined && input.ownerBotId !== identity.botSlug) {
+    return { ok: false, reason: 'actor-mismatch' };
+  }
   const lesson = cleanLesson(input.lesson);
   const taskSignature = cleanLesson(input.taskSignature);
-  const ownerBotId = cleanLesson(input.ownerBotId);
-  if (!lesson || !taskSignature || !ownerBotId) return { ok: false, reason: 'invalid-input' };
+  if (!lesson || !taskSignature) return { ok: false, reason: 'invalid-input' };
   const record = {
     id: randomUUID(),
     visibility: 'private',
-    ownerBotId,
+    ownerBotId: identity.botSlug,
     taskSignature,
     lesson,
   };
@@ -39,10 +45,12 @@ export function addPrivate(bank, input) {
   return { ok: true, record };
 }
 
-export function readPrivate(bank, actor, id) {
+export function readPrivate(bank, identity, id) {
+  const who = hostBot(identity);
+  if (!who.ok) return who;
   const record = bank.records.find((item) => item.id === id && item.visibility === 'private');
   if (!record) return { ok: false, reason: 'not-found' };
-  if (record.ownerBotId !== actor) return { ok: false, reason: 'denied' };
+  if (record.ownerBotId !== who.botSlug) return { ok: false, reason: 'denied' };
   return { ok: true, record };
 }
 
@@ -74,10 +82,15 @@ export function publishShared(bank, input) {
   if (input.approved !== true || input.desensitized !== true) {
     return { ok: false, reason: 'not-approved' };
   }
+  const identity = hostBot(input.identity);
+  if (!identity.ok) return identity;
+  if (input.actor !== undefined && input.actor !== identity.botSlug) {
+    return { ok: false, reason: 'actor-mismatch' };
+  }
   const lesson = cleanLesson(input.lesson);
   const taskSignature = cleanLesson(input.taskSignature);
-  const ownerBotId = cleanLesson(input.actor);
-  if (!lesson || !taskSignature || !ownerBotId) return { ok: false, reason: 'invalid-input' };
+  const ownerBotId = identity.botSlug;
+  if (!lesson || !taskSignature) return { ok: false, reason: 'invalid-input' };
   if (PRIVATE_MARKERS.some((marker) => lesson.includes(marker))) {
     return { ok: false, reason: 'not-desensitized' };
   }
@@ -94,8 +107,9 @@ export function publishShared(bank, input) {
   return { ok: true, record, reviewerPacket: reviewerPacket(record) };
 }
 
-export function readShared(bank, actor) {
-  if (typeof actor !== 'string' || actor.trim() === '') return [];
+export function readShared(bank, identity) {
+  const who = hostBot(identity);
+  if (!who.ok) return [];
   return bank.records.filter(sharedShape).map(reviewerPacket);
 }
 
@@ -119,15 +133,14 @@ export function similarTask(left, right) {
   return shared >= 2;
 }
 
-export function recall(bank, actor, task) {
+export function recall(bank, identity, task) {
+  const who = hostBot(identity);
   const query = cleanLesson(task);
-  if (!query || typeof actor !== 'string' || actor.trim() === '') {
-    return { privateHits: [], sharedHits: [] };
-  }
+  if (!who.ok || !query) return { privateHits: [], sharedHits: [] };
   const privateHits = bank.records.filter(
     (record) =>
       record.visibility === 'private' &&
-      record.ownerBotId === actor &&
+      record.ownerBotId === who.botSlug &&
       similarTask(record.taskSignature, query),
   );
   const sharedHits = bank.records

@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +52,8 @@ import {
 } from '../../adapters/tobs-thinking/seed/lib/super-agent.mjs';
 import { RUBRIC } from '../../adapters/tobs-thinking/seed/lib/rubric.mjs';
 import { packSeed, stageSeed } from '../../adapters/tobs-thinking/pack.mjs';
+import { resolveContained } from '../../adapters/tobs-thinking/seed/lib/bounds.mjs';
+import { bindHostSession } from '../../adapters/tobs-thinking/seed/lib/identity.mjs';
 
 const seed = join(dirname(fileURLToPath(import.meta.url)), '../../adapters/tobs-thinking/seed');
 const cli = join(seed, 'bin/adapt.mjs');
@@ -55,6 +66,10 @@ function temp(prefix) {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   roots.push(dir);
   return dir;
+}
+
+function host(slug) {
+  return bindHostSession(slug).identity;
 }
 
 function chars(file) {
@@ -195,26 +210,45 @@ describe('private and shared memory', () => {
     const path = join(dir, 'private-bank.json');
     const first = emptyBank();
     const added = addPrivate(first, {
+      identity: host('bot-a'),
       ownerBotId: 'bot-a',
       taskSignature: '重复打开错误页',
       lesson: '先看父级容器',
     });
     expect(added.ok).toBe(true);
+    expect(
+      addPrivate(emptyBank(), {
+        identity: host('bot-a'),
+        ownerBotId: 'bot-b',
+        taskSignature: '重复打开错误页',
+        lesson: '先看父级容器',
+      }).reason,
+    ).toBe('actor-mismatch');
+    expect(
+      addPrivate(emptyBank(), { ownerBotId: 'bot-a', taskSignature: 'x', lesson: 'y' }).reason,
+    ).toBe('unauthenticated');
     writeFileSync(path, serializeBank(first));
     const loaded = JSON.parse(readFileSync(path, 'utf8'));
-    expect(readPrivate(loaded, 'bot-a', added.record.id).ok).toBe(true);
-    expect(readPrivate(loaded, 'bot-b', added.record.id)).toMatchObject({
+    expect(readPrivate(loaded, host('bot-a'), added.record.id).ok).toBe(true);
+    expect(readPrivate(loaded, host('bot-b'), added.record.id)).toMatchObject({
       ok: false,
       reason: 'denied',
     });
+    expect(readPrivate(loaded, 'bot-a', added.record.id).reason).toBe('unauthenticated');
     expect(readShared(loaded, 'bot-b')).toEqual([]);
   });
 
   it('shares only an approved desensitized lesson and recalls it for a new Bot', () => {
     const bank = emptyBank();
-    addPrivate(bank, { ownerBotId: 'bot-a', taskSignature: '打开错误页', lesson: '私有细节' });
+    addPrivate(bank, {
+      identity: host('bot-a'),
+      ownerBotId: 'bot-a',
+      taskSignature: '打开错误页',
+      lesson: '私有细节',
+    });
     expect(
       publishShared(bank, {
+        identity: host('bot-a'),
         actor: 'bot-a',
         taskSignature: '打开错误页',
         lesson: '私聊原文仍在',
@@ -225,6 +259,7 @@ describe('private and shared memory', () => {
     ).toBe(false);
     expect(
       publishShared(bank, {
+        identity: host('bot-a'),
         actor: 'bot-a',
         taskSignature: '打开错误页',
         lesson: '先看父级容器 [private-chat]',
@@ -233,6 +268,7 @@ describe('private and shared memory', () => {
       }).ok,
     ).toBe(false);
     const published = publishShared(bank, {
+      identity: host('bot-a'),
       actor: 'bot-a',
       taskSignature: '打开错误页',
       lesson: '先看父级容器再改当前元素',
@@ -245,12 +281,13 @@ describe('private and shared memory', () => {
       taskSignature: '打开错误页',
       lesson: '先看父级容器再改当前元素',
     });
-    expect(readShared(bank, 'bot-b')).toEqual([published.reviewerPacket]);
-    expect(readPrivate(bank, 'bot-b', bank.records[0].id).reason).toBe('denied');
-    const seen = recall(bank, 'bot-c', '页面再次打开错误页');
+    expect(readShared(bank, host('bot-b'))).toEqual([published.reviewerPacket]);
+    expect(readShared(bank, 'bot-b')).toEqual([]);
+    expect(readPrivate(bank, host('bot-b'), bank.records[0].id).reason).toBe('denied');
+    const seen = recall(bank, host('bot-c'), '页面再次打开错误页');
     expect(seen.privateHits).toEqual([]);
     expect(seen.sharedHits.map((item) => item.lesson)).toEqual(['先看父级容器再改当前元素']);
-    const own = recall(bank, 'bot-a', '页面再次打开错误页');
+    const own = recall(bank, host('bot-a'), '页面再次打开错误页');
     expect(own.privateHits).toHaveLength(1);
     expect(own.sharedHits).toHaveLength(1);
   });
@@ -269,7 +306,8 @@ describe('migration', () => {
     mkdirSync(join(bee, '.dsh/skills/other-skill'), { recursive: true });
     writeFileSync(join(bee, '.dsh/skills/other-skill/SKILL.md'), 'leave me');
     const beforeBee = snapshotTree(bee);
-    const moved = migrateSkills({ seedDir: seed, targetDir: ada, siblings: [bee] });
+    const auth = { identity: host('ada'), root: ada };
+    const moved = migrateSkills({ seedDir: seed, targetDir: ada, authorization: auth });
     expect(moved.ok).toBe(true);
     expect(moved.copied).toContain('the-top-thinking');
     expect(moved.copied).toContain('super-agent');
@@ -284,9 +322,16 @@ describe('migration', () => {
     expect(readFileSync(join(ada, 'SOUL.md'), 'utf8')).toBe('Ada 自己的灵魂');
     expect(snapshotTree(bee)).toEqual(beforeBee);
     expect(readFileSync(join(bee, '.dsh/skills/other-skill/SKILL.md'), 'utf8')).toBe('leave me');
-    expect(migrateSkills({ seedDir: seed, targetDir: bee, siblings: [bee] }).ok).toBe(false);
-    const removed = rollbackSkills(ada);
-    expect(removed.removed).toContain('fix-bug-doctor');
+    expect(
+      migrateSkills({
+        seedDir: seed,
+        targetDir: bee,
+        authorization: { identity: host('bee'), root: ada },
+      }).reason,
+    ).toBe('path-escape');
+    expect(migrateSkills({ seedDir: seed, targetDir: ada }).reason).toBe('unauthenticated');
+    const removed = rollbackSkills(ada, auth);
+    expect(removed.removed.some((item) => item.endsWith('fix-bug-doctor'))).toBe(true);
     expect(removed.removed).toContain('.botharness/super-agent.json');
     expect(removed.removed).toContain('.botharness/catalog');
     expect(inspectBot(ada).equipped).toBe(false);
@@ -452,8 +497,10 @@ describe('super-agent contract', () => {
       reason: 'needs-delivery-gate',
       callIds: ['assign-1'],
     });
+    const statusDir = importedStatusDir();
     const reported = JSON.parse(
-      execFileSync(process.execPath, [cli, 'super-agent-status', '--target', importedStatusDir()], {
+      execFileSync(process.execPath, [cli, 'super-agent-status', '--target', '.'], {
+        cwd: statusDir,
         encoding: 'utf8',
       }),
     );
@@ -536,13 +583,26 @@ describe('asset inventory', () => {
   it('hides private retrospective titles and does not treat the catalog as a delivery pass', () => {
     const store = { bank: emptyBank(), inventory: null };
     for (const title of ['题目一', '题目二', '题目三']) {
-      addRetrospective(store, { actor: 'bot-a', title, lesson: `私有正文${title}` });
+      addRetrospective(store, { identity: host('bot-a'), title, lesson: `私有正文${title}` });
     }
     expect(store.inventory).toBeNull();
-    addRetrospective(store, { actor: 'bot-a', title: '题目四', lesson: '私有正文不能出现在标题' });
+    addRetrospective(store, {
+      identity: host('bot-a'),
+      title: '题目四',
+      lesson: '私有正文不能出现在标题',
+    });
     expect(checkPrivate(store, 'bot-a').ok).toBe(true);
-    expect(readPrivateTitles(store, 'bot-b')).toEqual({ ok: false, reason: 'denied', titles: [] });
-    expect(readPrivateTitles(store, 'bot-a').titles).toContain('题目四');
+    expect(readPrivateTitles(store, host('bot-b'))).toEqual({
+      ok: false,
+      reason: 'denied',
+      titles: [],
+    });
+    expect(readPrivateTitles(store, 'bot-b')).toEqual({
+      ok: false,
+      reason: 'unauthenticated',
+      titles: [],
+    });
+    expect(readPrivateTitles(store, host('bot-a')).titles).toContain('题目四');
     expect(JSON.stringify(store.inventory)).not.toContain('私有正文不能出现在标题');
     const coded = temp('code-seed-');
     stageSeed(coded, { code: true });
@@ -611,46 +671,78 @@ describe('production write checkpoint', () => {
   });
 });
 
-describe('adapter command', () => {
-  it('round-trips a private lesson and denies the other Bot', () => {
-    const dir = temp('cli-');
-    const bank = join(dir, 'private-bank.json');
-    const added = JSON.parse(
-      execFileSync(
-        process.execPath,
-        [
-          cli,
-          'private-add',
-          '--actor',
-          'bot-a',
-          '--bank',
-          bank,
-          '--task',
-          '打开错误页',
-          '--lesson',
-          '先看父级',
-        ],
-        { encoding: 'utf8' },
-      ),
+describe('path and identity boundaries', () => {
+  it('refuses escaped, linked and unauthenticated writes', () => {
+    const root = temp('bounds-');
+    const outside = temp('outside-');
+    writeFileSync(join(outside, 'secret.md'), 'do-not-copy');
+    mkdirSync(join(root, 'linked-parent'));
+    symlinkSync(outside, join(root, 'escape'));
+    expect(resolveContained(root, 'escape').reason).toBe('symlink-escape');
+    expect(resolveContained(root, '../outside').reason).toBe('path-escape');
+    expect(resolveContained(root, outside).reason).toBe('path-escape');
+    expect(migrateSkills({ seedDir: seed, targetDir: join(root, 'escape') }).reason).toBe(
+      'unauthenticated',
     );
-    expect(added.ok).toBe(true);
-    const read = JSON.parse(
-      execFileSync(
-        process.execPath,
-        [cli, 'private-read', '--actor', 'bot-a', '--bank', bank, '--id', added.id],
-        { encoding: 'utf8' },
-      ),
-    );
-    expect(read.record.lesson).toBe('先看父级');
+    expect(
+      migrateSkills({
+        seedDir: seed,
+        targetDir: outside,
+        authorization: { identity: host('ada'), root },
+      }).reason,
+    ).toBe('path-escape');
+    const marker = join(outside, 'SOUL.md');
+    writeFileSync(marker, 'untouched');
+    expect(readFileSync(marker, 'utf8')).toBe('untouched');
+    expect(existsSync(join(outside, '.dsh'))).toBe(false);
+    mkdirSync(join(root, 'nested'));
+    expect(
+      migrateSkills({
+        seedDir: seed,
+        targetDir: join(root, 'nested'),
+        authorization: { identity: host('ada'), root },
+      }).reason,
+    ).toBe('target-not-authorized');
     try {
       execFileSync(
         process.execPath,
-        [cli, 'private-read', '--actor', 'bot-b', '--bank', bank, '--id', added.id],
+        [cli, 'migrate', '--target', outside, '--seed', seed, '--actor', 'ada'],
         { encoding: 'utf8' },
       );
-      throw new Error('other bot should be denied');
+      throw new Error('migrate should refuse');
     } catch (error) {
-      expect(JSON.parse(error.stderr.toString()).reason).toBe('denied');
+      expect(JSON.parse(error.stderr.toString()).reason).toBe('unauthenticated');
+      expect(error.stdout?.toString() ?? '').not.toContain('copied');
     }
+    expect(readFileSync(marker, 'utf8')).toBe('untouched');
+  });
+
+  it('does not let the CLI treat --actor as a host session', () => {
+    const dir = temp('cli-auth-');
+    const bank = join(dir, 'private-bank.json');
+    writeFileSync(
+      bank,
+      '{"version":1,"records":[{"id":"x","visibility":"private","ownerBotId":"bot-a","taskSignature":"题目","lesson":"秘密"}]}',
+    );
+    try {
+      execFileSync(
+        process.execPath,
+        [cli, 'private-read', '--actor', 'bot-a', '--bank', bank, '--id', 'x'],
+        { encoding: 'utf8' },
+      );
+      throw new Error('cli actor should not authenticate');
+    } catch (error) {
+      expect(JSON.parse(error.stderr.toString()).reason).toBe('unauthenticated');
+      expect(error.stdout?.toString() ?? '').not.toContain('秘密');
+    }
+    try {
+      execFileSync(process.execPath, [cli, 'rollback', '--target', dir, '--actor', 'bot-a'], {
+        encoding: 'utf8',
+      });
+      throw new Error('rollback should not run');
+    } catch (error) {
+      expect(JSON.parse(error.stderr.toString()).reason).toBe('unauthenticated');
+    }
+    expect(existsSync(bank)).toBe(true);
   });
 });

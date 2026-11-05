@@ -1,5 +1,8 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { resolveContained } from './bounds.mjs';
+import { hostBot } from './identity.mjs';
 
 export const PACK_SKILLS = [
   'the-top-thinking',
@@ -13,16 +16,45 @@ export const PACK_SKILLS = [
 export const PACK_FILES = ['.botharness/super-agent.json'];
 export const PACK_DIRS = ['.botharness/catalog'];
 
-function samePath(left, right) {
-  return resolve(left) === resolve(right);
+function authorize(authorization, targetDir) {
+  const who = hostBot(authorization?.identity);
+  if (!who.ok) return who;
+  const root = resolveContained(authorization.root);
+  if (!root.ok) return root;
+  const target = resolveContained(authorization.root, targetDir);
+  if (!target.ok) return target;
+  if (target.path !== root.path) return { ok: false, reason: 'target-not-authorized' };
+  return { ok: true, root: root.path };
 }
 
-export function migrateSkills({ seedDir, targetDir, siblings = [], replaceSkills = false }) {
-  if (siblings.some((sibling) => samePath(sibling, targetDir))) {
-    return { ok: false, reason: 'target-is-sibling' };
+function copyContained(from, to) {
+  let sourceStat;
+  try {
+    sourceStat = lstatSync(from);
+  } catch {
+    return { ok: false, reason: 'source-missing' };
   }
+  if (sourceStat.isSymbolicLink()) return { ok: false, reason: 'symlink-escape' };
+  cpSync(from, to, {
+    recursive: true,
+    filter: (source) => {
+      try {
+        return !lstatSync(source).isSymbolicLink();
+      } catch {
+        return false;
+      }
+    },
+  });
+  return { ok: true };
+}
+
+export function migrateSkills({ seedDir, targetDir, authorization, replaceSkills = false }) {
+  const allowed = authorize(authorization, targetDir);
+  if (!allowed.ok) return allowed;
   const sourceRoot = join(seedDir, '.dsh', 'skills');
-  const targetRoot = join(targetDir, '.dsh', 'skills');
+  const targetRoot = join(allowed.root, '.dsh', 'skills');
+  const targetSkills = resolveContained(allowed.root, '.dsh/skills');
+  if (!targetSkills.ok) return targetSkills;
   mkdirSync(targetRoot, { recursive: true });
   const copied = [];
   const skipped = [];
@@ -34,31 +66,36 @@ export function migrateSkills({ seedDir, targetDir, siblings = [], replaceSkills
       skipped.push(name);
       continue;
     }
-    cpSync(from, to, { recursive: true });
+    const copiedFile = copyContained(from, to);
+    if (!copiedFile.ok) return copiedFile;
     copied.push(name);
   }
   const files = [];
   for (const relative of PACK_FILES) {
     const from = join(seedDir, relative);
-    const to = join(targetDir, relative);
+    const to = join(allowed.root, relative);
+    if (!resolveContained(allowed.root, relative).ok) return { ok: false, reason: 'path-escape' };
     if (!existsSync(from)) continue;
     if (existsSync(to) && !replaceSkills) {
       skipped.push(relative);
       continue;
     }
     mkdirSync(join(to, '..'), { recursive: true });
-    cpSync(from, to);
+    const copiedFile = copyContained(from, to);
+    if (!copiedFile.ok) return copiedFile;
     files.push(relative);
   }
   for (const relative of PACK_DIRS) {
     const from = join(seedDir, relative);
-    const to = join(targetDir, relative);
+    const to = join(allowed.root, relative);
+    if (!resolveContained(allowed.root, relative).ok) return { ok: false, reason: 'path-escape' };
     if (!existsSync(from)) continue;
     if (existsSync(to) && !replaceSkills) {
       skipped.push(relative);
       continue;
     }
-    cpSync(from, to, { recursive: true });
+    const copiedDir = copyContained(from, to);
+    if (!copiedDir.ok) return copiedDir;
     files.push(relative);
   }
   return {
@@ -66,31 +103,32 @@ export function migrateSkills({ seedDir, targetDir, siblings = [], replaceSkills
     copied,
     files,
     skipped,
-    soulUntouched: existsSync(join(targetDir, 'SOUL.md')),
+    soulUntouched: existsSync(join(allowed.root, 'SOUL.md')),
   };
 }
 
-export function rollbackSkills(targetDir) {
+export function rollbackSkills(targetDir, authorization) {
+  const allowed = authorize(authorization, targetDir);
+  if (!allowed.ok) return allowed;
   const removed = [];
+  const removeInside = (relative) => {
+    const contained = resolveContained(allowed.root, relative);
+    if (!contained.ok) return contained;
+    if (!existsSync(contained.path)) return { ok: true };
+    if (lstatSync(contained.path).isSymbolicLink()) return { ok: false, reason: 'symlink-escape' };
+    rmSync(contained.path, { recursive: true, force: true });
+    removed.push(relative);
+    return { ok: true };
+  };
   for (const name of PACK_SKILLS) {
-    const dir = join(targetDir, '.dsh', 'skills', name);
-    if (!existsSync(dir)) continue;
-    rmSync(dir, { recursive: true, force: true });
-    removed.push(name);
+    const removedPath = removeInside(join('.dsh', 'skills', name));
+    if (!removedPath.ok) return removedPath;
   }
-  for (const relative of PACK_FILES) {
-    const path = join(targetDir, relative);
-    if (!existsSync(path)) continue;
-    rmSync(path);
-    removed.push(relative);
+  for (const relative of [...PACK_FILES, ...PACK_DIRS]) {
+    const removedPath = removeInside(relative);
+    if (!removedPath.ok) return removedPath;
   }
-  for (const relative of PACK_DIRS) {
-    const path = join(targetDir, relative);
-    if (!existsSync(path)) continue;
-    rmSync(path, { recursive: true, force: true });
-    removed.push(relative);
-  }
-  return { removed };
+  return { ok: true, removed };
 }
 
 export function snapshotTree(dir) {

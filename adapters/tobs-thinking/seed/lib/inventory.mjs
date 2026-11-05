@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { addPrivate } from './bank.mjs';
+import { hostBot } from './identity.mjs';
 
 export const INVENTORY_THRESHOLD = 4;
 export const BRIEF_LIMIT = 160;
@@ -318,27 +319,27 @@ export function loadEntry(root, entry) {
 
 export function addRetrospective(store, input) {
   const added = addPrivate(store.bank, {
-    ownerBotId: input.actor,
+    identity: input.identity,
     taskSignature: input.title,
     lesson: input.lesson,
   });
   if (!added.ok) return added;
   const mine = store.bank.records.filter(
-    (record) => record.visibility === 'private' && record.ownerBotId === input.actor,
+    (record) => record.visibility === 'private' && record.ownerBotId === added.record.ownerBotId,
   );
   if (mine.length >= INVENTORY_THRESHOLD) {
     const items = mine.map((record) => ({
       id: record.id,
       name: record.taskSignature,
-      brief: input.actor === record.ownerBotId ? record.taskSignature : '',
+      brief: record.taskSignature,
       entry: `memory/private-bank.json#${record.id}`,
       status: 'active',
       version: 1,
-      owner: input.actor,
+      owner: record.ownerBotId,
     }));
     const previous = store.inventory?.revisions?.length ?? 0;
     store.inventory = {
-      owner: input.actor,
+      owner: added.record.ownerBotId,
       visibility: 'private',
       items,
       revisions: [
@@ -354,9 +355,11 @@ export function addRetrospective(store, input) {
   return { ok: true, id: added.record.id };
 }
 
-export function readPrivateTitles(store, actor) {
+export function readPrivateTitles(store, identity) {
+  const who = hostBot(identity);
+  if (!who.ok) return { ok: false, reason: who.reason, titles: [] };
   if (!store.inventory) return { ok: true, titles: [] };
-  if (store.inventory.owner !== actor || store.inventory.visibility !== 'private') {
+  if (store.inventory.owner !== who.botSlug || store.inventory.visibility !== 'private') {
     return { ok: false, reason: 'denied', titles: [] };
   }
   return { ok: true, titles: store.inventory.items.map((item) => item.name) };
