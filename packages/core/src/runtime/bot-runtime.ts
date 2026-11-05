@@ -8841,6 +8841,17 @@ class BotRuntimeImplementation implements BotRuntime {
     const createdAt = this.#now().toISOString();
     this.#database.transaction(
       (database) => {
+        if (sourceEventId.startsWith('direct-')) {
+          database
+            .prepare(
+              `INSERT INTO source_events (
+                 source_event_id, source_kind, bot_slug, body, created_at, attempt_state
+               )
+               SELECT ?, 'human-message', ?, ?, ?, 'handled'
+               WHERE NOT EXISTS (SELECT 1 FROM source_events WHERE source_event_id = ?)`,
+            )
+            .run(sourceEventId, bot.slug, 'Direct super-agent request', createdAt, sourceEventId);
+        }
         const cwdReference = permission.primaryCwd;
         this.#ownership.claimWithin(database, {
           sessionId,

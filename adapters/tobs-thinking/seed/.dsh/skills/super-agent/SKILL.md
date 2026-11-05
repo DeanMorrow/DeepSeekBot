@@ -14,6 +14,6 @@ whenToUse: 要把一件事拆开并交给有限的子任务时加载。不要用
 
 本 Bot 没有安装那套 bundle，也没有把预设改成 router 或 worker。仓库里的 `bot_subagent`、本仓库未提供的 oar、以及 Agent Teams，都不是这个原型。把 `SKILL.md` 放进记忆，不等于装完。
 
-这里只留下规划纪律：入口是 `node bin/adapt.mjs super-agent-plan`。一次最多 3 段，深度最多 2，同时最多 2 个，总共最多 3 次。子任务不继承私有记录，仍走 Tobs 现有的工作区授权和写生产代码前的明确确认。不接 GitHub，不接飞书，不打开 Panel，不自动合并。
+可调用入口是 Host 工具 `super_agent_run`。它把任务拆成最多 3 段，经现有 Assignment 创建发出。深度最多 2，同时最多 2 个，总共最多 3 次。没有有效 Workspace Grant 时拒绝，不创建子任务。子任务不继承私有记录。不接 GitHub，不接飞书，不打开 Panel，不自动合并，不换 danger-full-access preset。
 
-`node bin/adapt.mjs super-agent-status` 必须显示 `fullBundleInstalled: false` 和 `adaptation: discipline-only`。没有真实调用编号时，调用证据是未测。
+这不是原型整包已安装。`fullBundleInstalled` 必须是 false，`adaptation` 是 `tobs-assignment`。离线测试执行器不是活模型实派工。

@@ -2,6 +2,7 @@ import { createChannelActionTool } from './channel-action-tool.js';
 import { PRIVATE_INPUT_TOOLS } from '../credentials/tool-contract.js';
 import { createBotMessageTool } from './bot-message-tool.js';
 import { createPackTools } from '../memory/host-pack-tools.js';
+import { runSuperAgent } from './super-agent-dispatch.js';
 import { assertOrchestratorWorkingDirectory } from './orchestrator-working-directory.js';
 import { TOB_CLI_PROMPT } from '../tob/service.js';
 import { AssignmentInboxAcceptanceUncertainError } from './assignment-delivery.js';
@@ -1400,6 +1401,50 @@ class DshBotAgentAdapter implements BotAgentAdapter {
             retryable: true,
             message: outcome.message,
           });
+        },
+      }),
+    );
+    registerTool(
+      defineTool({
+        name: 'super_agent_run',
+        description:
+          'Split one task into at most three Assignment Sessions on an active Workspace Grant. Does not install the dsh-superagent prototype, replace presets, or create a Grant. Depth 2, two at a time, three total.',
+        parameters: {
+          task: {
+            type: 'string',
+            required: true,
+            description: 'Task text. Separate pieces with newlines or semicolons.',
+          },
+          grant_id: {
+            type: 'string',
+            description:
+              'Active Workspace Grant id. Omitted requests are refused and create nothing.',
+          },
+          depth: {
+            type: 'number',
+            description: 'Caller depth. 1 may dispatch. 2 or more is refused.',
+          },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        execute: async (args, context) => {
+          const active = this.#runs.get(run.sessionId);
+          if (active?.role !== 'orchestrator') {
+            throw new Error('super_agent_run: Orchestrator run is unavailable');
+          }
+          const value = await runSuperAgent(
+            {
+              task: args.task,
+              grantId: args.grant_id,
+              depth: args.depth,
+            },
+            active.run.assignments,
+            context.signal,
+            active.direct === true ? 'test-executor' : 'host-assignment',
+          );
+          return JSON.stringify(value);
         },
       }),
     );

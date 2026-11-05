@@ -23,7 +23,7 @@
 
 不能把每个 Tobs Bot 的预设改成 router 或 worker，否则会换掉现有 Bot 配置、审批和目录权限。`bot_subagent`、本仓库没有的 oar、以及 Agent Teams，都不是这个原型。
 
-因此这里没有安装整包，也没有接 GitHub、飞书、Panel 或自动合并。每个新种子和被点名迁移的旧 Bot 只带一份纪律入口：`node bin/adapt.mjs super-agent-plan`。状态命令必须报 `adaptation: discipline-only` 和 `fullBundleInstalled: false`。限额是深度 2、同时 2 个、一共 3 次。子任务不继承私有记录，审批仍用 Tobs 现有的工作区授权和写生产代码前的明确确认。
+因此这里没有安装整包，也没有接 GitHub、飞书、Panel 或自动合并。每个 Bot 的 Host 工具是 `super_agent_run`，它调用现有的 Assignment 创建，不是把原型整包换个名字。状态必须报 `adaptation: tobs-assignment` 和 `fullBundleInstalled: false`。限额是深度 2、同时 2 个、一共 3 次。没有有效 Workspace Grant 就拒绝，不自造授权。子任务不继承私有记录。
 
 本环境没有活 Bot。种子「思考基线」有入口，没有真实调用编号。未迁移的 Bot 没有这份入口。
 
@@ -33,7 +33,7 @@
 
 私有复盘的标题只属于那个 Bot。另一个身份连标题也读不到。本地没有合适技能时，`skill-find` 只生成报备，不安装仓库，也不授予安装、外发或付费。正式的 find-skills 入口还没有给到，所以这里停在报备。
 
-super-agent 仍是 `discipline-only`，没有真实 Bot 调用，不能写成通过，也不把这次清单改动算成质量分提高了 5%。
+`super_agent_run` 的离线测试执行器不是活模型派工。没有批准的工作区和真实模型时，不能写成端到端已完成，也不把这次改动算成质量分提高了 5%。
 
 ## 宿主接线
 

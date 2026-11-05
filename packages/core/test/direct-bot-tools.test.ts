@@ -21,7 +21,7 @@ import {
 import { FakeAgentHost } from './dsh-agent-host-fixture.js';
 import { createTempRoot, FIXED_NOW, trackTestOwner } from './helpers.js';
 import { createTestRegistry } from './registry-fixture.js';
-import { createTestWorkspaceGrants } from './workspace-grant-fixture.js';
+import { createTestWorkspaceGrants, TEST_GRANT_ID } from './workspace-grant-fixture.js';
 
 const repo = join(import.meta.dirname, '../../..');
 
@@ -70,6 +70,44 @@ function setup() {
 }
 
 describe('direct Bot tool runner', () => {
+  it('registers super_agent_run and refuses dispatch without a grant (test executor, not a model)', async () => {
+    const { runtime } = setup();
+    const signal = new AbortController().signal;
+    expect(runtime.directBotTools!().map((tool) => tool.name)).toContain('super_agent_run');
+    expect(TURN_ONLY_BOT_TOOLS.has('super_agent_run')).toBe(false);
+    const refused = await runtime.runDirectBotTool!(
+      'ada',
+      'super_agent_run',
+      { task: '读日志；改测试' },
+      signal,
+    );
+    expect(refused.result).toMatchObject({
+      ok: false,
+      reason: 'grant-required',
+      officialInstalled: false,
+      fullBundleInstalled: false,
+      liveModelDispatch: false,
+      dispatched: [],
+    });
+    const dispatched = await runtime.runDirectBotTool!(
+      'ada',
+      'super_agent_run',
+      { task: '读日志', grant_id: TEST_GRANT_ID },
+      signal,
+    );
+    const body = dispatched.result as {
+      ok: boolean;
+      reason?: string;
+      dispatched: Array<{ sessionId: string }>;
+      officialInstalled: boolean;
+      liveModelDispatch: boolean;
+    };
+    expect(body.officialInstalled).toBe(false);
+    expect(body.liveModelDispatch).toBe(false);
+    expect(body, JSON.stringify(body)).toMatchObject({ ok: true });
+    expect(body.dispatched[0]?.sessionId).toBeTruthy();
+  });
+
   it('runs pack memory on the Host Bot through the direct tool chain (test executor, not a model)', async () => {
     const { runtime } = setup();
     const signal = new AbortController().signal;

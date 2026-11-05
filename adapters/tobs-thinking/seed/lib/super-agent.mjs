@@ -41,7 +41,7 @@ export function readManifest(botDir) {
     value?.role !== 'super-agent-contract' ||
     value.officialInstalled !== false ||
     value.fullBundleInstalled !== false ||
-    value.adaptation !== 'discipline-only' ||
+    value.adaptation !== 'tobs-assignment' ||
     value.sourceCommit !== SOURCE_COMMIT ||
     value.githubSource !== false ||
     value.feishuSource !== false ||
@@ -81,7 +81,7 @@ export function inspectBot(botDir, liveCalls = []) {
       local: '0.2.2-alpha.2',
       localTested: false,
     },
-    entry: manifest && skill ? 'node bin/adapt.mjs super-agent-plan' : null,
+    entry: manifest && skill ? 'super_agent_run' : null,
     soulAlone: false,
     parentTool: manifest?.parentTool ?? null,
     forbiddenOnOrchestrator: manifest ? ORCHESTRATOR_FORBIDDEN : [],

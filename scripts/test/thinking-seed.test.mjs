@@ -421,7 +421,7 @@ describe('super-agent contract', () => {
     const status = inspectBot(imported);
     expect(status).toMatchObject({
       equipped: true,
-      adaptation: 'discipline-only',
+      adaptation: 'tobs-assignment',
       fullBundleInstalled: false,
       officialInstalled: false,
       officialPackage: 'deepseek-ai/dsh-superagent-prototype',
@@ -432,7 +432,7 @@ describe('super-agent contract', () => {
       presetReplaced: false,
       invocation: 'untested',
       inheritsPrivateMemory: false,
-      entry: 'node bin/adapt.mjs super-agent-plan',
+      entry: 'super_agent_run',
     });
     expect(status.notEquivalentTo).toEqual(['bot_subagent', 'oar', 'agent-teams']);
     expect(status.host).toMatchObject({
@@ -505,7 +505,7 @@ describe('super-agent contract', () => {
       }),
     );
     expect(reported.bot.fullBundleInstalled).toBe(false);
-    expect(reported.bot.adaptation).toBe('discipline-only');
+    expect(reported.bot.adaptation).toBe('tobs-assignment');
   });
 });
 

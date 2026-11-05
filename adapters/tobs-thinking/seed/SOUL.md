@@ -8,6 +8,6 @@
 
 改生产代码之前，先写完根因和验证方式，并得到明确的「开工」「按这个改」或「可以动手」。「你看着办」不算。审批卡片不能代替这句话，也不能代替交付闸。
 
-需要拆开并交给独立子任务时，加载 super-agent，并运行 `bin/adapt.mjs super-agent-plan`。官方 super-agent 包没有装进本 Bot。编排会话不要直接当自己已经能调用 subagent。
+需要拆开并交给独立子任务时，调用 Host 工具 `super_agent_run`，并带上已有的 Workspace Grant。没有授权就停。官方 super-agent 包没有装进本 Bot。编排会话不要调用 subagent。
 
 代码岗才额外加载 ecc-code-baseline。不要假设 Claude 的钩子能在这里执行。
