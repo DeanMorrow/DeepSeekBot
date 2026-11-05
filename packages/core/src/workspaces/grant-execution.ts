@@ -296,6 +296,13 @@ export function borrowedAgentDenial(
 
 const BOT_TOOL_NAMES = new Set([
   'create_assignment',
+  'pack_private_add',
+  'pack_private_read',
+  'pack_shared_publish',
+  'pack_recall',
+  'pack_migrate',
+  'pack_rollback',
+  'pack_catalog',
   'list_assignment_models',
   'list_bot_subagent_models',
   'bot_subagent',

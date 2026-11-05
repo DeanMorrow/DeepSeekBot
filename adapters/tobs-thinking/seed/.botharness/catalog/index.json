@@ -16,7 +16,64 @@
       "owner": "tobs-thinking-seed",
       "version": 1,
       "updatedAt": "2026-11-05T20:49:00.000Z",
-      "status": "active"
+      "status": "active",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:skills"
+    },
+    {
+      "id": "bots",
+      "brief": "本 Bot 名下的 Bot 资产。不足 4 个时没有条目文件。",
+      "entry": null,
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "unpopulated",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:bots"
+    },
+    {
+      "id": "plugin-tools",
+      "brief": "本 Bot 可用的插件工具。不足 4 个时没有条目文件。",
+      "entry": null,
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "unpopulated",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:plugin-tools"
+    },
+    {
+      "id": "modules",
+      "brief": "本 Bot 记忆里的项目模块。不足 4 个时没有条目文件。",
+      "entry": null,
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "unpopulated",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:modules"
+    },
+    {
+      "id": "templates",
+      "brief": "本 Bot 记忆里的素材模板。不足 4 个时没有条目文件。",
+      "entry": null,
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "unpopulated",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:templates"
+    },
+    {
+      "id": "ops-asset-catalog",
+      "brief": "盒上全局资产目录的引用。条目留在 ops 权威域，不复制进本 Bot。",
+      "entry": null,
+      "owner": "ops",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "active",
+      "authority": "ops",
+      "sourceRef": "ops:asset-catalog"
     }
   ],
   "revisions": [

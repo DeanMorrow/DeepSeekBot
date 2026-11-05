@@ -1,6 +1,7 @@
 import { createChannelActionTool } from './channel-action-tool.js';
 import { PRIVATE_INPUT_TOOLS } from '../credentials/tool-contract.js';
 import { createBotMessageTool } from './bot-message-tool.js';
+import { createPackTools } from '../memory/host-pack-tools.js';
 import { assertOrchestratorWorkingDirectory } from './orchestrator-working-directory.js';
 import { TOB_CLI_PROMPT } from '../tob/service.js';
 import { AssignmentInboxAcceptanceUncertainError } from './assignment-delivery.js';
@@ -288,6 +289,9 @@ export interface DshBotAgentAdapterOptions {
   defaultAgentPreset?: string;
 
   orchestratorCwd?: (bot: PersonaBotRecord) => string | undefined;
+  workspaceGrants?: (
+    botSlug: string,
+  ) => readonly { id: string; workspacePath: string; revokedAt?: string }[];
   ensureWorkspace?: (path: string) => void;
   publishDraft?: (event: ChannelDraftEvent) => void;
 
@@ -484,6 +488,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
   readonly #promptText: (sessionId: string) => PromptText;
   readonly #hasSession: DshBotAgentAdapterOptions['hasSession'];
   readonly #orchestratorCwd: ((bot: PersonaBotRecord) => string | undefined) | undefined;
+  readonly #workspaceGrants: DshBotAgentAdapterOptions['workspaceGrants'];
   readonly #defaultAgentPreset: string | undefined;
   readonly #authorizeBorrow:
     | ((agent: Agent, role: 'orchestrator' | 'assignment') => void)
@@ -529,6 +534,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
     this.#promptText = options.promptText ?? (() => DEFAULT_PROMPT_TEXT);
     this.#hasSession = options.hasSession;
     this.#orchestratorCwd = options.orchestratorCwd;
+    this.#workspaceGrants = options.workspaceGrants;
     this.#defaultAgentPreset = options.defaultAgentPreset;
     this.#authorizeBorrow = options.authorizeBorrow;
     this.#admitSession = options.admitSession;
@@ -1125,6 +1131,18 @@ class DshBotAgentAdapter implements BotAgentAdapter {
     registerTool: (tool: ToolDefinition) => unknown,
     registerBridgeTool: (tool: ToolDefinition) => unknown,
   ): void {
+    for (const tool of createPackTools(run.bot.slug, {
+      memoryDir: () => this.#orchestratorCwd?.(run.bot),
+      grant: (id) => {
+        const found = this.#workspaceGrants?.(run.bot.slug)?.find(
+          (grant) => grant.id === id && grant.revokedAt === undefined,
+        );
+        return found === undefined
+          ? undefined
+          : { id: found.id, workspacePath: found.workspacePath };
+      },
+    }))
+      registerTool(tool);
     registerTool(
       createChannelActionTool(
         () => {

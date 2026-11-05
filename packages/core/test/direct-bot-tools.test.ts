@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -43,7 +43,16 @@ function setup() {
   const agents = createDshBotAgentAdapter({
     agents: host,
     defaultModel: { currentSelection: () => ({ provider: 'test', model: 'test' }) },
-    orchestratorCwd: () => join(home, 'memory'),
+    orchestratorCwd: () => {
+      const dir = join(home, 'memory');
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    },
+    workspaceGrants: () => {
+      const dir = join(home, 'project');
+      mkdirSync(dir, { recursive: true });
+      return [{ id: 'grant-1', workspacePath: dir }];
+    },
     ensureWorkspace: () => undefined,
     subagentTools: () => createBotSubagentModelTools({} as Context, () => undefined),
   });
@@ -61,6 +70,88 @@ function setup() {
 }
 
 describe('direct Bot tool runner', () => {
+  it('runs pack memory on the Host Bot through the direct tool chain (test executor, not a model)', async () => {
+    const { runtime } = setup();
+    const signal = new AbortController().signal;
+    const added = await runtime.runDirectBotTool!(
+      'ada',
+      'pack_private_add',
+      { task: '打开错误页', lesson: '先看父级' },
+      signal,
+    );
+    expect(added.result).toMatchObject({ ok: true, ownerBotId: 'ada' });
+    const id = (added.result as { id: string }).id;
+    await expect(
+      runtime.runDirectBotTool!('ada', 'pack_private_read', { id, actor: 'bee' }, signal),
+    ).resolves.toMatchObject({ result: { ok: false, reason: 'actor-mismatch' } });
+    await expect(
+      runtime.runDirectBotTool!('ada', 'pack_private_read', { id }, signal),
+    ).resolves.toMatchObject({
+      result: { ok: true, record: { lesson: '先看父级', ownerBotId: 'ada' } },
+    });
+    const shared = await runtime.runDirectBotTool!(
+      'ada',
+      'pack_shared_publish',
+      {
+        grant_id: 'grant-1',
+        task: '打开错误页',
+        lesson: '先看父级容器',
+        approved: true,
+        desensitized: true,
+      },
+      signal,
+    );
+    expect(shared.result).toMatchObject({ ok: true });
+    const recalled = await runtime.runDirectBotTool!(
+      'ada',
+      'pack_recall',
+      { task: '打开错误页', grant_id: 'grant-1' },
+      signal,
+    );
+    expect(recalled.result).toMatchObject({
+      ok: true,
+      privateHits: [expect.objectContaining({ lesson: '先看父级' })],
+      sharedHits: [expect.objectContaining({ lesson: '先看父级容器' })],
+    });
+    const migrated = await runtime.runDirectBotTool!(
+      'ada',
+      'pack_migrate',
+      { seed_dir: join(repo, 'adapters/tobs-thinking/seed') },
+      signal,
+    );
+    expect(migrated.result).toMatchObject({
+      ok: true,
+      copied: expect.arrayContaining(['the-top-thinking']),
+    });
+    const catalog = await runtime.runDirectBotTool!('ada', 'pack_catalog', {}, signal);
+    const view = catalog.result as {
+      directOmissionMeansModelLoadFailed: boolean;
+      modelSkillCatalog: string;
+      inventories: Array<{ id: string; status: string; briefs?: unknown[]; entry?: string | null }>;
+    };
+    expect(view.directOmissionMeansModelLoadFailed).toBe(false);
+    expect(view.modelSkillCatalog).toBe('untested');
+    expect(view.inventories.map((item) => item.id)).toEqual(
+      expect.arrayContaining([
+        'skills',
+        'bots',
+        'plugin-tools',
+        'modules',
+        'templates',
+        'ops-asset-catalog',
+      ]),
+    );
+    expect(view.inventories.find((item) => item.id === 'skills')?.status).toBe('active');
+    expect(view.inventories.find((item) => item.id === 'ops-asset-catalog')).toMatchObject({
+      status: 'unreachable',
+      entry: null,
+    });
+    expect(JSON.stringify(view)).not.toContain('memory/private');
+    expect(
+      existsSync(join(repo, 'adapters/tobs-thinking/seed/.dsh/skills/the-top-thinking/SKILL.md')),
+    ).toBe(true);
+  });
+
   it('keeps the native skill tool off the direct catalog', async () => {
     const { runtime } = setup();
     try {

@@ -35,6 +35,12 @@
 
 super-agent 仍是 `discipline-only`，没有真实 Bot 调用，不能写成通过，也不把这次清单改动算成质量分提高了 5%。
 
+## 宿主接线
+
+私有读写、共享发布和召回、受控迁移回滚，走宿主工具 `pack_private_add`、`pack_private_read`、`pack_shared_publish`、`pack_recall`、`pack_migrate`、`pack_rollback`。身份是这次 Host 会话里的 Bot，不看参数里的 actor。共享文件只能写进该 Bot 仍有效的 Workspace Grant。`deepseekbot bot-tool <bot> <工具名>` 用的是同一个工具。没有这版宿主时，1.6.1 只有静态种子，命令行迁移仍然拒绝。这不是真实模型测试，也不是 Windows 实测。
+
+完整 super-agent 的下一步是：在活 Host 上用 `list_workspace_grants` 拿到 grant，再调用已有的 `create_assignment` 做真正派工，并用第二个独立会话做交付闸。依赖是活 Host、一个已批准的工作区和另一次执行上下文。当前没有这些，所以还不能写成 super-agent 已完成。
+
 ## 命令边界
 
 `bin/adapt.mjs` 里的迁移、回滚和记忆读写不会把 `--actor` 当成已登录。没有宿主会话时这些命令直接拒绝，并且不写文件。路径必须留在授权目录里；指向上级、绝对路径跑出目录、符号链接或 Windows junction，都会拒绝。静态种子仍然可以用 `tobs create --from-dir` 导入。能启动预览不等于这些写操作已经获准。

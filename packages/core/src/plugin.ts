@@ -1468,6 +1468,7 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
       return modelReadiness.prepare(slug, role, retainedRoute);
     },
     orchestratorCwd: (bot) => core.registry.memoryDirFor(bot.slug),
+    workspaceGrants: (slug) => core.grants.list(slug),
     observePreparation: (slug, sessionId, preparing) => {
       if (!preparing && core.states.snapshot(slug).sessions[sessionId] !== 'thinking') return;
       core.states.setSessionState(

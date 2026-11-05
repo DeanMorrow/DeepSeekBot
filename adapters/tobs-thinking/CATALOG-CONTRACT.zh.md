@@ -27,6 +27,23 @@
 
 公开栏只能使用 `publicView` 的结果。私有复盘的标题和路径本来就不在注册表里。即使有人把私有路径写进注册表，`publicView` 也会在组客户端数据之前丢掉它。检查会把这种情况标成 `private-path-in-public-registry`，不能先发给界面再隐藏。
 
+## 两个权威域
+
+Bot Memory 的 `.botharness/catalog/index.json` 只登记这个 Bot 自己的清单。`sourceRef` 以 `bot-memory:` 开头的，文件在这份 Memory 里。`sourceRef` 为 `ops:asset-catalog` 的那一条指向盒上的全局资产目录，条目不复制进来。Host 读不到该源时，状态是 `unreachable`，简介为空，不能拿 Bot 里的技能清单冒充它。
+
+`bot-tools` 只列出 direct 工具。列表里没有 `skill`、直接调用得到 `tool-not-direct`，不能当成模型会话加载失败。模型侧技能目录这次仍是 `untested`。这里不另装 loader。
+
+## 状态
+
+- `active`：本地清单文件在，编号和版本与注册表一致。
+- `unpopulated`：这一类还没有条目文件。
+- `unreachable`：注册了入口或 ops 引用，但这次授权下读不到。
+- `stale`：文件在，但版本和注册表不一致。
+- `invalid`：文件在，但编号对不上。
+- `disabled`：注册表标明停用。
+
+视图字段有 `sourceRef`、`version`、`updatedAt`、`status`。没有推送。再调一次 `pack_catalog` 就是重读。身份是 Host 会话里的 Bot。参数里的 actor 若不一致就拒绝。私有标题和路径在返回前去掉。
+
 ## 失效和更新
 
 没有事件总线。第三栏自己重新读注册表。`version` 或 `updatedAt` 变了，就刷新。

@@ -77,11 +77,13 @@ export function publicView(registry) {
     .map((item) => ({
       id: item.id,
       brief: item.brief,
-      entry: item.entry,
+      entry: item.visibility === 'private' ? null : (item.entry ?? null),
       owner: item.owner,
       version: item.version,
       updatedAt: item.updatedAt,
       status: item.status,
+      authority: item.authority ?? null,
+      sourceRef: item.sourceRef ?? null,
       ...(item.replacement === undefined ? {} : { replacement: item.replacement }),
     }));
   return {
@@ -236,14 +238,13 @@ export function checkRegistry(root) {
     problems.push('nested-registry');
   }
   const ids = entries.map((item) => item.id);
-  const paths = entries.map((item) => item.entry);
+  const paths = entries.map((item) => item.entry).filter((entry) => typeof entry === 'string');
   if (new Set(ids).size !== ids.length) problems.push('duplicate-inventory-id');
   if (new Set(paths).size !== paths.length) problems.push('duplicate-truth-source');
   for (const item of entries) {
     if (
       !item.id ||
       !item.brief ||
-      !item.entry ||
       !item.owner ||
       !item.version ||
       !item.updatedAt ||
@@ -251,9 +252,12 @@ export function checkRegistry(root) {
     ) {
       problems.push(`incomplete-inventory:${item.id ?? 'unknown'}`);
     }
-    const target = join(root, item.entry ?? '');
-    const present = item.entry && existsSync(target);
-    if (item.status === 'active' && !present) problems.push(`dead-entry:${item.id}`);
+    if (!item.sourceRef) problems.push(`missing-source-ref:${item.id ?? 'unknown'}`);
+    if (item.authority === 'ops' && item.entry) problems.push(`ops-copied-into-bot:${item.id}`);
+    const target = item.entry ? join(root, item.entry) : '';
+    const present = Boolean(item.entry) && existsSync(target);
+    if (item.status === 'active' && item.authority !== 'ops' && !present)
+      problems.push(`dead-entry:${item.id}`);
     if (item.status === 'disabled' && !item.replacement)
       problems.push(`disabled-without-replacement:${item.id}`);
     if (present && item.status === 'active') {
@@ -282,7 +286,7 @@ export function readPublicCatalog(root) {
   if (!checked.publicView) return checked;
   const inventories = [];
   for (const item of checked.publicView.inventories) {
-    if (item.status !== 'active') continue;
+    if (item.status !== 'active' || !item.entry || item.authority === 'ops') continue;
     const body = JSON.parse(readFileSync(join(root, item.entry), 'utf8'));
     inventories.push({ id: item.id, briefs: (body.items ?? []).map(briefOf) });
   }
