@@ -1,52 +1,43 @@
-# 修正后的 Tobs 候选包
+# 候选包的复现边界
 
-上一包 `1.6.1-fork.e6dab320.1` 能装上，但 `botharness-profile` 一启动就找不到 `@deepseek-ai/dsh-subagent`。原因是插件入口把这个包和 `dsh-tool-bash`、`dsh-tool-pwsh` 留成外部 import，而它们只写在 devDependencies 里。打包时 devDependencies 被去掉，档案里就没有这三个包。`dsh-tools`、`dsh-agent`、`dsh-llm`、`dsh-session`、`dsh-scope` 已经由别的依赖带进来，所以不是这次的缺口。
+`botharness-profile` 是档案备份的恢复命令，不是 Host 工具入口。它执行 `import { runProfileRestoreCli } from '@botharness/core'`，因此加载 Core 主包 `dist/index.mjs`。主包顶层有：
 
-这不是 Grants 为空，也不是要改宿主版本。DSH 保持 `0.2.2-alpha.2`。档案里补上构建时用的 `0.2.1-rc.3` 库。
-
-## 版本
-
-- 产品版本：`1.6.1-fork.4fb2cc977.1`
-- 来源提交：`4fb2cc9774ec248b799ce2984c0bce4648bb0726`
-- Core SHA256：`ce203c63900b889778300243a5b5e836f69a2e43ff372e7940812c745d8ff5b5`
-- 校验：同目录 `SHA256SUMS`
-- 没有发布到 npm 或 GitHub Release
-
-请安装这一目录，不要再装 `tobs-fork-e6dab320`。
-
-## 安装和回滚
-
-用新的 `DSH_HOME`，`--dsh` 指向独立安装的 DSH，不要指向本仓库的 `node_modules/.bin/dsh`。
-
-```bash
-node scripts/install-source-profile.mjs \
-  --home <新的-DSH_HOME> \
-  --profile <新档案名> \
-  --artifacts <本目录> \
-  --dsh <独立的-dsh>
+```js
+import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent';
 ```
 
-回滚是停掉这个新宿主并删掉这个新的 `DSH_HOME`。不要覆盖正在使用的旧档案。
+在 `1.6.1-fork.e6dab320.1` 里，这个包只出现在 devDependencies，peerDependencies 是空的，打包时被去掉，档案的 lock 没有安装它。用裸 Node 跑该 CLI 得到 `ERR_MODULE_NOT_FOUND`。
 
-## 正式工具命令
+这不表示 Host 失败。Windows 上的 Host 仍在 `4211`，匿名请求是 401，日志里没有 subagent 错误。DSH `0.2.2-alpha.2` 自己的安装树里有 `@deepseek-ai/dsh-subagent`，插件由 Host 加载时走那棵树。裸 Node 从档案脚本向上找，找不到 DSH 安装树里的包。
 
-工具调用用 `deepseekbot` 或 `tobs`，不用 `botharness-profile`。后者只做档案备份的 inspect/restore。
+`deepseekbot` 走的是 `@botharness/core/cli`。这份 CLI 把 `@deepseek-ai/*` 打进包内，所以 `deepseekbot --help` 能成功，不依赖档案里有没有 `dsh-subagent`。
 
-宿主启动时打印的地址是 `--host` 的值，只取 origin，不要自己猜路径。令牌放进文件或 `DEEPSEEKBOT_HOST_TOKEN`，不要写进命令参数。
+## 修正包
 
-```bash
-deepseekbot bot-tools --host <dsh 打印的 origin> --token-file <令牌文件>
-deepseekbot bot-tool <bot-id> pack_catalog --host <同一个 origin> --token-file <令牌文件>
+`1.6.1-fork.4fb2cc977.1` 把主包实际顶层引用、而档案 lock 原先没装的三份库写成 dependencies，版本钉在构建用的 `0.2.1-rc.3`：
+
+- `@deepseek-ai/dsh-subagent`
+- `@deepseek-ai/dsh-tool-bash`
+- `@deepseek-ai/dsh-tool-pwsh`
+
+不要改 DSH 版本，也不要另装 latest。来源提交 `4fb2cc9774ec248b799ce2984c0bce4648bb0726`。Core SHA256：`ce203c63900b889778300243a5b5e836f69a2e43ff372e7940812c745d8ff5b5`。交付目录 `tobs-fork-4fb2cc977`。
+
+## 本包里的可测入口
+
+对这份包的 `node_modules/.bin/deepseekbot help` 和 `tobs help` 运行结果相同，共 315 行。里面有这两行，没有 `pack_catalog` 这个词：
+
+```text
+tobs bot-tools
+tobs bot-tool <id> <tool> [--args-stdin] [--session <assignment-session-id>]
 ```
 
-`bot-tools` 不列出 `skill` 和 `create_assignment`。这是直接工具边界。`pack_catalog` 在直接工具列表里。
+`pack_catalog` 是 `<tool>` 的名字，由正在运行的 Host 通过 `bot-tools` 列出来，不是帮助里的子命令。帮助里的 Live Host 约定是：`--host` 用该 Host 已经在听的 loopback origin，或 `DEEPSEEKBOT_HOST`；令牌用 `DEEPSEEKBOT_HOST_TOKEN` 或 `--token-file`，不要写进参数。当前 Windows Host 的 origin 是 `http://127.0.0.1:4211`。
 
-## 这次已核对
+用本档案里的 `deepseekbot`，不要用 PATH 上另一份旧 `tobs`：
 
-在隔离的 DSH `0.2.2-alpha.2` 上安装本包，`componentsVerified` 为 true。档案内有 `@deepseek-ai/dsh-subagent@0.2.1-rc.3`。
+```bash
+deepseekbot bot-tools --host http://127.0.0.1:4211 --token-file <该 Host 启动令牌文件>
+deepseekbot bot-tool <bot-id> pack_catalog --host http://127.0.0.1:4211 --token-file <同一个文件>
+```
 
-`botharness-profile` 不再报缺包，没有参数时返回它自己的用法。`deepseekbot bot-tools` 对这个隔离宿主返回 61 个工具，其中有 `pack_catalog`。对一个没有模型的新 Bot，`bot-tool <bot-id> pack_catalog` 退出码 0。空白记忆先是 `registry-missing`；放入 seed 清单后 `ok: true`，技能是 `active`，`ops-asset-catalog` 是 `unreachable`。没有调用模型，没有创建 Grant。
-
-## 仍未测
-
-模型会话里的原生 `skill` 仍是 `untested`。Workspace Grants 仍可以是空的；那不阻止这次 CLI。空 Grant 时不能 `create_assignment`。
+隔离 Linux、DSH `0.2.2-alpha.2` 上，后一条对没有模型的 Bot 退出码 0。空白记忆返回 `registry-missing`；放入 seed 清单后 `ok: true`。Windows 上的这条调用还没有做。模型会话里的原生 `skill` 仍未测。
