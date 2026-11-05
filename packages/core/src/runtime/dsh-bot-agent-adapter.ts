@@ -1408,7 +1408,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
       defineTool({
         name: 'super_agent_run',
         description:
-          'Split one task into at most three Assignment Sessions on an active Workspace Grant. Does not install the dsh-superagent prototype, replace presets, or create a Grant. Depth 2, two at a time, three total.',
+          'Schedule at most three Assignment Sessions on an active Workspace Grant. A host call can start model work and may cost. Does not install the prototype, replace presets, or create a Grant. Depth 2, two non-terminal at a time, three total.',
         parameters: {
           task: {
             type: 'string',
@@ -1423,6 +1423,11 @@ class DshBotAgentAdapter implements BotAgentAdapter {
           depth: {
             type: 'number',
             description: 'Caller depth. 1 may dispatch. 2 or more is refused.',
+          },
+          run_id: {
+            type: 'string',
+            description:
+              'Stable run id. Omit to start a new run. Pass the returned runId to retry the same subtasks.',
           },
         },
         output: {
@@ -1439,10 +1444,16 @@ class DshBotAgentAdapter implements BotAgentAdapter {
               task: args.task,
               grantId: args.grant_id,
               depth: args.depth,
+              runId: args.run_id,
             },
-            active.run.assignments,
+            {
+              kind: 'host-assignment',
+              grants: () => active.run.assignments.grants(),
+              list: () => active.run.assignments.list(),
+              create: (request) => active.run.assignments.create(request),
+              stop: (sessionId) => active.run.assignments.stop(sessionId),
+            },
             context.signal,
-            active.direct === true ? 'test-executor' : 'host-assignment',
           );
           return JSON.stringify(value);
         },

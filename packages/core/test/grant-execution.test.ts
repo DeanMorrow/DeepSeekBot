@@ -364,6 +364,23 @@ describe('Workspace Grant execution boundary', () => {
     expect(isDshGovernedTool('channel_attachment_open')).toBe(false);
   });
 
+  it('does not treat an active Workspace Grant as approval for every child tool', () => {
+    const state = fixture();
+    expect(isDshGovernedTool('super_agent_run')).toBe(false);
+    expect(isDshGovernedTool('secret_cli')).toBe(true);
+    expect(
+      grantToolExecutionDenial(
+        state.core,
+        state.assignment,
+        state.policy,
+        state.approval,
+        'secret_cli',
+        {},
+      ),
+    ).toMatch(/requires Human approval/);
+    expect(state.requireActive).toHaveBeenCalledWith(botSlug, grantId);
+  });
+
   it('keeps each-use approval for secret tools', () => {
     const state = fixture();
     for (const tool of ['secret_cli', 'secret_mcp_connect']) {

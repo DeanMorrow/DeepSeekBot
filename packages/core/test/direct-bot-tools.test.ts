@@ -21,7 +21,7 @@ import {
 import { FakeAgentHost } from './dsh-agent-host-fixture.js';
 import { createTempRoot, FIXED_NOW, trackTestOwner } from './helpers.js';
 import { createTestRegistry } from './registry-fixture.js';
-import { createTestWorkspaceGrants, TEST_GRANT_ID } from './workspace-grant-fixture.js';
+import { createTestWorkspaceGrants } from './workspace-grant-fixture.js';
 
 const repo = join(import.meta.dirname, '../../..');
 
@@ -86,26 +86,12 @@ describe('direct Bot tool runner', () => {
       reason: 'grant-required',
       officialInstalled: false,
       fullBundleInstalled: false,
+      executor: 'host-assignment',
       liveModelDispatch: false,
+      scheduled: false,
+      mayIncurModelCost: false,
       dispatched: [],
     });
-    const dispatched = await runtime.runDirectBotTool!(
-      'ada',
-      'super_agent_run',
-      { task: '读日志', grant_id: TEST_GRANT_ID },
-      signal,
-    );
-    const body = dispatched.result as {
-      ok: boolean;
-      reason?: string;
-      dispatched: Array<{ sessionId: string }>;
-      officialInstalled: boolean;
-      liveModelDispatch: boolean;
-    };
-    expect(body.officialInstalled).toBe(false);
-    expect(body.liveModelDispatch).toBe(false);
-    expect(body, JSON.stringify(body)).toMatchObject({ ok: true });
-    expect(body.dispatched[0]?.sessionId).toBeTruthy();
   });
 
   it('runs pack memory on the Host Bot through the direct tool chain (test executor, not a model)', async () => {
