@@ -11,6 +11,7 @@ export const PACK_SKILLS = [
 ];
 
 export const PACK_FILES = ['.botharness/super-agent.json'];
+export const PACK_DIRS = ['.botharness/catalog'];
 
 function samePath(left, right) {
   return resolve(left) === resolve(right);
@@ -49,6 +50,17 @@ export function migrateSkills({ seedDir, targetDir, siblings = [], replaceSkills
     cpSync(from, to);
     files.push(relative);
   }
+  for (const relative of PACK_DIRS) {
+    const from = join(seedDir, relative);
+    const to = join(targetDir, relative);
+    if (!existsSync(from)) continue;
+    if (existsSync(to) && !replaceSkills) {
+      skipped.push(relative);
+      continue;
+    }
+    cpSync(from, to, { recursive: true });
+    files.push(relative);
+  }
   return {
     ok: true,
     copied,
@@ -70,6 +82,12 @@ export function rollbackSkills(targetDir) {
     const path = join(targetDir, relative);
     if (!existsSync(path)) continue;
     rmSync(path);
+    removed.push(relative);
+  }
+  for (const relative of PACK_DIRS) {
+    const path = join(targetDir, relative);
+    if (!existsSync(path)) continue;
+    rmSync(path, { recursive: true, force: true });
     removed.push(relative);
   }
   return { removed };

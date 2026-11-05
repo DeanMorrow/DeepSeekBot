@@ -17,6 +17,15 @@ import {
 import { inspectSkillFile } from '../../adapters/tobs-thinking/seed/lib/catalog.mjs';
 import { evaluateDelivery } from '../../adapters/tobs-thinking/seed/lib/gate.mjs';
 import {
+  addRetrospective,
+  checkInventory,
+  checkPrivate,
+  findLocalSkill,
+  groupBriefs,
+  readIndex,
+  readPrivateTitles,
+} from '../../adapters/tobs-thinking/seed/lib/inventory.mjs';
+import {
   migrateSkills,
   rollbackSkills,
   snapshotTree,
@@ -29,7 +38,7 @@ import {
   planTask,
 } from '../../adapters/tobs-thinking/seed/lib/super-agent.mjs';
 import { RUBRIC } from '../../adapters/tobs-thinking/seed/lib/rubric.mjs';
-import { packSeed } from '../../adapters/tobs-thinking/pack.mjs';
+import { packSeed, stageSeed } from '../../adapters/tobs-thinking/pack.mjs';
 
 const seed = join(dirname(fileURLToPath(import.meta.url)), '../../adapters/tobs-thinking/seed');
 const cli = join(seed, 'bin/adapt.mjs');
@@ -261,6 +270,7 @@ describe('migration', () => {
     expect(moved.copied).toContain('the-top-thinking');
     expect(moved.copied).toContain('super-agent');
     expect(moved.files).toContain('.botharness/super-agent.json');
+    expect(moved.files).toContain('.botharness/catalog');
     expect(inspectBot(ada)).toMatchObject({
       equipped: true,
       officialInstalled: false,
@@ -274,6 +284,7 @@ describe('migration', () => {
     const removed = rollbackSkills(ada);
     expect(removed.removed).toContain('fix-bug-doctor');
     expect(removed.removed).toContain('.botharness/super-agent.json');
+    expect(removed.removed).toContain('.botharness/catalog');
     expect(inspectBot(ada).equipped).toBe(false);
     expect(readFileSync(join(ada, 'SOUL.md'), 'utf8')).toBe('Ada 自己的灵魂');
   });
@@ -452,6 +463,92 @@ function importedStatusDir() {
   cpSync(seed, dir, { recursive: true });
   return dir;
 }
+
+describe('asset inventory', () => {
+  it('keeps the index to categories and checks the skill briefs', () => {
+    const index = JSON.parse(readFileSync(join(seed, '.botharness/catalog/index.json'), 'utf8'));
+    const skills = JSON.parse(readFileSync(join(seed, '.botharness/catalog/skills.json'), 'utf8'));
+    expect(JSON.stringify(index)).not.toContain('the-top-thinking');
+    expect(readIndex(index, 'bot-b', 'bot-a').categories.map((item) => item.id)).not.toContain(
+      'retrospectives',
+    );
+    expect(checkInventory(seed, index).ok).toBe(true);
+    const found = findLocalSkill(skills, '根因');
+    expect(found).toMatchObject({ hit: true, detailLoaded: false });
+    expect(JSON.stringify(found.briefs)).not.toContain('写码前必须停');
+    const missing = findLocalSkill(skills, '量子编织');
+    expect(missing.report).toMatchObject({
+      toldHuman: true,
+      installGranted: false,
+      outboundGranted: false,
+      paidGranted: false,
+      findSkills: 'awaiting-formal-entry',
+    });
+    expect(missing.report.passed).toBeUndefined();
+    expect(groupBriefs(skills.items, 4).mode).toBe('grouped');
+    expect(groupBriefs(skills.items, 4).groups.every((group) => group.brief === undefined)).toBe(
+      true,
+    );
+  });
+
+  it('requires an inventory from the fourth skill and notices a bad list', () => {
+    const dir = temp('three-skills-');
+    for (const name of ['one', 'two', 'three']) {
+      mkdirSync(join(dir, '.dsh/skills', name), { recursive: true });
+      writeFileSync(join(dir, '.dsh/skills', name, 'SKILL.md'), 'x');
+    }
+    const bare = {
+      version: 1,
+      categories: [{ id: 'skills', inventory: null, visibility: 'bot-local' }],
+    };
+    expect(checkInventory(dir, bare).ok).toBe(true);
+    mkdirSync(join(dir, '.dsh/skills/four'), { recursive: true });
+    writeFileSync(join(dir, '.dsh/skills/four/SKILL.md'), 'x');
+    expect(checkInventory(dir, bare).problems).toContain('skills-need-inventory');
+
+    const broken = temp('broken-catalog-');
+    cpSync(seed, broken, { recursive: true });
+    mkdirSync(join(broken, '.dsh/skills/extra'), { recursive: true });
+    writeFileSync(join(broken, '.dsh/skills/extra/SKILL.md'), 'x');
+    const index = JSON.parse(readFileSync(join(broken, '.botharness/catalog/index.json'), 'utf8'));
+    expect(checkInventory(broken, index).problems).toContain('unlisted:extra');
+    const skillsPath = join(broken, '.botharness/catalog/skills.json');
+    const skills = JSON.parse(readFileSync(skillsPath, 'utf8'));
+    skills.items.push({ ...skills.items[0], status: 'deprecated' });
+    writeFileSync(skillsPath, JSON.stringify(skills));
+    expect(checkInventory(broken, index).problems).toEqual(
+      expect.arrayContaining([
+        'duplicate-id',
+        'deprecated-without-replacement:the-top-thinking',
+        'unlisted:extra',
+      ]),
+    );
+  });
+
+  it('hides private retrospective titles and does not treat the catalog as a delivery pass', () => {
+    const store = { bank: emptyBank(), inventory: null };
+    for (const title of ['题目一', '题目二', '题目三']) {
+      addRetrospective(store, { actor: 'bot-a', title, lesson: `私有正文${title}` });
+    }
+    expect(store.inventory).toBeNull();
+    addRetrospective(store, { actor: 'bot-a', title: '题目四', lesson: '私有正文不能出现在标题' });
+    expect(checkPrivate(store, 'bot-a').ok).toBe(true);
+    expect(readPrivateTitles(store, 'bot-b')).toEqual({ ok: false, reason: 'denied', titles: [] });
+    expect(readPrivateTitles(store, 'bot-a').titles).toContain('题目四');
+    expect(JSON.stringify(store.inventory)).not.toContain('私有正文不能出现在标题');
+    const coded = temp('code-seed-');
+    stageSeed(coded, { code: true });
+    const index = JSON.parse(readFileSync(join(coded, '.botharness/catalog/index.json'), 'utf8'));
+    expect(checkInventory(coded, index).ok).toBe(true);
+    const reported = JSON.parse(
+      execFileSync(process.execPath, [cli, 'skill-find', '--target', seed, '--query', '量子编织'], {
+        encoding: 'utf8',
+      }),
+    );
+    expect(reported.report.installGranted).toBe(false);
+    expect(evaluateDelivery({ declaredKind: 'progress' }).passed).toBe(false);
+  });
+});
 
 describe('production write checkpoint', () => {
   it('accepts only the explicit confirmations', () => {

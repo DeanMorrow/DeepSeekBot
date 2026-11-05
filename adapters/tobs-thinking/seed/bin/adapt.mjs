@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   addPrivate,
@@ -17,6 +17,7 @@ import { evaluateDelivery } from '../lib/gate.mjs';
 import { migrateSkills, rollbackSkills } from '../lib/migrate.mjs';
 import { productionWriteDecision } from '../lib/production-write.mjs';
 import { inspectBot, invokeSubtask, planTask } from '../lib/super-agent.mjs';
+import { checkInventory, findLocalSkill } from '../lib/inventory.mjs';
 
 function args(argv) {
   const out = { _: [] };
@@ -131,6 +132,16 @@ if (command === 'probe') {
   const planned = planTask(flags.task ?? '', flags.depth ? Number(flags.depth) : 1);
   if (!planned.ok) fail(planned.reason);
   else ok(planned);
+} else if (command === 'catalog-check') {
+  const index = JSON.parse(
+    readFileSync(join(flags.target ?? '.', '.botharness/catalog/index.json'), 'utf8'),
+  );
+  ok(checkInventory(flags.target ?? '.', index));
+} else if (command === 'skill-find') {
+  const skills = JSON.parse(
+    readFileSync(join(flags.target ?? '.', '.botharness/catalog/skills.json'), 'utf8'),
+  );
+  ok(findLocalSkill(skills, flags.query ?? ''));
 } else if (command === 'super-agent-invoke') {
   const planned = planTask(flags.task ?? '');
   const subtask = planned.subtasks?.[0];

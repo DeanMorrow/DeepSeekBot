@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "id": "skills",
+      "inventory": ".botharness/catalog/skills.json",
+      "visibility": "bot-local"
+    },
+    { "id": "bots", "inventory": null, "visibility": "bot-local" },
+    { "id": "plugin-tools", "inventory": null, "visibility": "bot-local" },
+    { "id": "modules", "inventory": null, "visibility": "bot-local" },
+    { "id": "templates", "inventory": null, "visibility": "bot-local" },
+    {
+      "id": "retrospectives",
+      "inventory": "memory/private/retrospective-index.json",
+      "visibility": "private"
+    }
+  ]
+}

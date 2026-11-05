@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "the-top-thinking",
+      "name": "顶层思考",
+      "brief": "分析、取舍、方案和交付前先看清问题与代价。",
+      "entry": ".dsh/skills/the-top-thinking/SKILL.md",
+      "status": "active",
+      "version": 1,
+      "owner": "tobs-thinking-seed"
+    },
+    {
+      "id": "fix-bug-doctor",
+      "name": "根因排错",
+      "brief": "反复修不好时按五步查原因，写生产代码前要明确确认。",
+      "entry": ".dsh/skills/fix-bug-doctor/SKILL.md",
+      "status": "active",
+      "version": 1,
+      "owner": "tobs-thinking-seed"
+    },
+    {
+      "id": "delivery-gate",
+      "name": "交付闸",
+      "brief": "用固定评分判断能否标通过，缺证据不能通过。",
+      "entry": ".dsh/skills/delivery-gate/SKILL.md",
+      "status": "active",
+      "version": 1,
+      "owner": "tobs-thinking-seed"
+    },
+    {
+      "id": "recall-and-memory",
+      "name": "召回和记忆",
+      "brief": "任务前召回私有复盘，共享只收已批准且脱敏的教训。",
+      "entry": ".dsh/skills/recall-and-memory/SKILL.md",
+      "status": "active",
+      "version": 1,
+      "owner": "tobs-thinking-seed"
+    },
+    {
+      "id": "super-agent",
+      "name": "super-agent 纪律",
+      "brief": "只借鉴限额和审批。不是原型整包，也还没有真实调用通过。",
+      "entry": ".dsh/skills/super-agent/SKILL.md",
+      "status": "active",
+      "version": 1,
+      "owner": "tobs-thinking-seed"
+    }
+  ],
+  "revisions": [
+    {
+      "version": 1,
+      "reason": "five seed skills need one brief inventory",
+      "verification": "entries-exist"
+    }
+  ]
+}
