@@ -14,7 +14,7 @@ import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai
 
 ## 修正包
 
-含 `super_agent_run` 的可安装包是 `1.6.1-fork.0e1461c18.1`，来源提交 `0e1461c189d8b626701dce2707cf2c1ecf8322a8`，Core SHA256 `028d6d6460baff7e4a0d12113368da51bab58e5a89f31019d9fc73b7f691f739`，目录 `tobs-fork-0e1461c18`。它仍把主包顶层引用写成 dependencies，版本钉在 `0.2.1-rc.3`。
+不要安装 `1.6.1-fork.0e1461c18.1`。替换包是 `1.6.1-fork.1c6ade932.1`，来源提交 `1c6ade9320e409a2e94576b17b71400d15d31771`，Core SHA256 `aa07048f015c354b383a509cb9976e7d97c96b0d5f17a83ffc8724f49c9020ec`，目录 `tobs-fork-1c6ade932`。子任务 brief 不复制父任务原文。Host 上的创建可能启动模型并产生费用。离线回归只用测试执行器。
 
 实际写入 dependencies 的是 8 个，不只下面曾经点名的 3 个：`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、`dsh-subagent`、`dsh-tool-bash`、`dsh-tool-pwsh`、`dsh-tools`。交付目录 `closure/` 有这 8 个 registry tarball，sha512 与 lock 一致。peer 不在其中。13 个产品包加这 8 个文件不是离线整包。
 
