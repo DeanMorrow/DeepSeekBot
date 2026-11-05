@@ -61,6 +61,24 @@ function setup() {
 }
 
 describe('direct Bot tool runner', () => {
+  it('keeps the native skill tool off the direct catalog', async () => {
+    const { runtime } = setup();
+    try {
+      const names = runtime.directBotTools!().map((tool) => tool.name);
+      expect(names).not.toContain('skill');
+      await expect(
+        runtime.runDirectBotTool!(
+          'ada',
+          'skill',
+          { name: 'the-top-thinking' },
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ code: 'tool-not-direct' });
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it('removes obsolete delivery tools from the catalog and refuses direct execution', async () => {
     const { runtime } = setup();
     try {
