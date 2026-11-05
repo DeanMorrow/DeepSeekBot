@@ -78,14 +78,13 @@ describe('direct Bot tool runner', () => {
     const refused = await runtime.runDirectBotTool!(
       'ada',
       'super_agent_run',
-      { task: '读日志；改测试' },
+      { work_orders: '客户账号 13800000000' },
       signal,
     );
     expect(refused.result).toMatchObject({
       ok: false,
-      reason: 'grant-required',
+      reason: 'task-source-required',
       officialInstalled: false,
-      fullBundleInstalled: false,
       executor: 'host-assignment',
       liveModelDispatch: false,
       scheduled: false,

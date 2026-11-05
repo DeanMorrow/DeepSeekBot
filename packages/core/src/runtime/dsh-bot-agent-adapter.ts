@@ -2,7 +2,7 @@ import { createChannelActionTool } from './channel-action-tool.js';
 import { PRIVATE_INPUT_TOOLS } from '../credentials/tool-contract.js';
 import { createBotMessageTool } from './bot-message-tool.js';
 import { createPackTools } from '../memory/host-pack-tools.js';
-import { runSuperAgent } from './super-agent-dispatch.js';
+import { cancelSuperAgentRun, runSuperAgent } from './super-agent-dispatch.js';
 import { assertOrchestratorWorkingDirectory } from './orchestrator-working-directory.js';
 import { TOB_CLI_PROMPT } from '../tob/service.js';
 import { AssignmentInboxAcceptanceUncertainError } from './assignment-delivery.js';
@@ -1408,12 +1408,13 @@ class DshBotAgentAdapter implements BotAgentAdapter {
       defineTool({
         name: 'super_agent_run',
         description:
-          'Schedule at most three Assignment Sessions on an active Workspace Grant. A host call can start model work and may cost. Does not install the prototype, replace presets, or create a Grant. Depth 2, two non-terminal at a time, three total.',
+          'Schedule at most three Assignment Sessions from explicit work orders on an active Workspace Grant. A host call can start model work and may cost. Does not install the prototype, replace presets, create a Grant, or copy parent chat. Depth 2, two running or queued at a time, three in flight.',
         parameters: {
-          task: {
+          work_orders: {
             type: 'string',
             required: true,
-            description: 'Task text. Separate pieces with newlines or semicolons.',
+            description:
+              'JSON array of {goal, steps, acceptance}. This is the only task text sent to a child. A raw parent transcript is refused.',
           },
           grant_id: {
             type: 'string',
@@ -1427,7 +1428,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
           run_id: {
             type: 'string',
             description:
-              'Stable run id. Omit to start a new run. Pass the returned runId to retry the same subtasks.',
+              'Server-issued run id for a retry of the same work orders. Omit to start a new run. A different session or a different payload is refused.',
           },
         },
         output: {
@@ -1441,10 +1442,12 @@ class DshBotAgentAdapter implements BotAgentAdapter {
           }
           const value = await runSuperAgent(
             {
-              task: args.task,
+              workOrders: args.work_orders,
               grantId: args.grant_id,
               depth: args.depth,
               runId: args.run_id,
+              sessionId: run.sessionId,
+              botSlug: active.run.bot.slug,
             },
             {
               kind: 'host-assignment',
@@ -1454,6 +1457,51 @@ class DshBotAgentAdapter implements BotAgentAdapter {
               stop: (sessionId) => active.run.assignments.stop(sessionId),
             },
             context.signal,
+          );
+          return JSON.stringify(value);
+        },
+      }),
+    );
+    registerTool(
+      defineTool({
+        name: 'super_agent_cancel',
+        description:
+          'Stop the Assignment Sessions of one super_agent_run id owned by this Orchestrator Session. Does not stop other runs.',
+        parameters: {
+          run_id: {
+            type: 'string',
+            required: true,
+            description: 'runId returned by super_agent_run.',
+          },
+          grant_id: {
+            type: 'string',
+            required: true,
+            description: 'The same Workspace Grant id used to start the run.',
+          },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        execute: async (args) => {
+          const active = this.#runs.get(run.sessionId);
+          if (active?.role !== 'orchestrator') {
+            throw new Error('super_agent_cancel: Orchestrator run is unavailable');
+          }
+          const value = await cancelSuperAgentRun(
+            {
+              runId: args.run_id,
+              grantId: args.grant_id,
+              sessionId: run.sessionId,
+              botSlug: active.run.bot.slug,
+            },
+            {
+              kind: 'host-assignment',
+              grants: () => active.run.assignments.grants(),
+              list: () => active.run.assignments.list(),
+              create: (request) => active.run.assignments.create(request),
+              stop: (sessionId) => active.run.assignments.stop(sessionId),
+            },
           );
           return JSON.stringify(value);
         },
