@@ -6,8 +6,11 @@ export const PACK_SKILLS = [
   'fix-bug-doctor',
   'delivery-gate',
   'recall-and-memory',
+  'super-agent',
   'ecc-code-baseline',
 ];
+
+export const PACK_FILES = ['.botharness/super-agent.json'];
 
 function samePath(left, right) {
   return resolve(left) === resolve(right);
@@ -33,7 +36,26 @@ export function migrateSkills({ seedDir, targetDir, siblings = [], replaceSkills
     cpSync(from, to, { recursive: true });
     copied.push(name);
   }
-  return { ok: true, copied, skipped, soulUntouched: existsSync(join(targetDir, 'SOUL.md')) };
+  const files = [];
+  for (const relative of PACK_FILES) {
+    const from = join(seedDir, relative);
+    const to = join(targetDir, relative);
+    if (!existsSync(from)) continue;
+    if (existsSync(to) && !replaceSkills) {
+      skipped.push(relative);
+      continue;
+    }
+    mkdirSync(join(to, '..'), { recursive: true });
+    cpSync(from, to);
+    files.push(relative);
+  }
+  return {
+    ok: true,
+    copied,
+    files,
+    skipped,
+    soulUntouched: existsSync(join(targetDir, 'SOUL.md')),
+  };
 }
 
 export function rollbackSkills(targetDir) {
@@ -43,6 +65,12 @@ export function rollbackSkills(targetDir) {
     if (!existsSync(dir)) continue;
     rmSync(dir, { recursive: true, force: true });
     removed.push(name);
+  }
+  for (const relative of PACK_FILES) {
+    const path = join(targetDir, relative);
+    if (!existsSync(path)) continue;
+    rmSync(path);
+    removed.push(relative);
   }
   return { removed };
 }

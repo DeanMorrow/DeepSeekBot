@@ -22,6 +22,12 @@ import {
   snapshotTree,
 } from '../../adapters/tobs-thinking/seed/lib/migrate.mjs';
 import { productionWriteDecision } from '../../adapters/tobs-thinking/seed/lib/production-write.mjs';
+import {
+  aggregate,
+  inspectBot,
+  invokeSubtask,
+  planTask,
+} from '../../adapters/tobs-thinking/seed/lib/super-agent.mjs';
 import { RUBRIC } from '../../adapters/tobs-thinking/seed/lib/rubric.mjs';
 import { packSeed } from '../../adapters/tobs-thinking/pack.mjs';
 
@@ -100,6 +106,7 @@ describe('thinking seed placement', () => {
       'fix-bug-doctor',
       'delivery-gate',
       'recall-and-memory',
+      'super-agent',
     ]) {
       const file = join(imported, '.dsh/skills', name, 'SKILL.md');
       expect(inspectSkillFile(imported, file)).toMatchObject({
@@ -252,12 +259,22 @@ describe('migration', () => {
     const moved = migrateSkills({ seedDir: seed, targetDir: ada, siblings: [bee] });
     expect(moved.ok).toBe(true);
     expect(moved.copied).toContain('the-top-thinking');
+    expect(moved.copied).toContain('super-agent');
+    expect(moved.files).toContain('.botharness/super-agent.json');
+    expect(inspectBot(ada)).toMatchObject({
+      equipped: true,
+      officialInstalled: false,
+      invocation: 'untested',
+    });
+    expect(inspectBot(bee).equipped).toBe(false);
     expect(readFileSync(join(ada, 'SOUL.md'), 'utf8')).toBe('Ada 自己的灵魂');
     expect(snapshotTree(bee)).toEqual(beforeBee);
     expect(readFileSync(join(bee, '.dsh/skills/other-skill/SKILL.md'), 'utf8')).toBe('leave me');
     expect(migrateSkills({ seedDir: seed, targetDir: bee, siblings: [bee] }).ok).toBe(false);
     const removed = rollbackSkills(ada);
     expect(removed.removed).toContain('fix-bug-doctor');
+    expect(removed.removed).toContain('.botharness/super-agent.json');
+    expect(inspectBot(ada).equipped).toBe(false);
     expect(readFileSync(join(ada, 'SOUL.md'), 'utf8')).toBe('Ada 自己的灵魂');
   });
 });
@@ -333,6 +350,69 @@ describe('delivery gate', () => {
     expect(evaluateDelivery(passing({ baselineScore: 0, baselineFrozen: 0 })).reasons).toContain(
       'gain-unmeasurable',
     );
+  });
+});
+
+describe('super-agent contract', () => {
+  it('does not treat a soul sentence or the native subagent tool as an installed package', () => {
+    const imported = temp('super-agent-');
+    cpSync(seed, imported, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: imported });
+    const status = inspectBot(imported);
+    expect(status).toMatchObject({
+      equipped: true,
+      officialInstalled: false,
+      officialPackage: 'deepseek-ai/dsh-superagent-prototype',
+      invocation: 'untested',
+      inheritsPrivateMemory: false,
+    });
+    expect(status.forbiddenOnOrchestrator).toContain('bot_subagent');
+    rmSync(join(imported, '.botharness/super-agent.json'));
+    rmSync(join(imported, '.dsh/skills/super-agent'), { recursive: true });
+    writeFileSync(join(imported, 'SOUL.md'), '本 Bot 已启用 super-agent');
+    expect(inspectBot(imported)).toMatchObject({ equipped: false, officialInstalled: false });
+  });
+
+  it('bounds the plan and keeps private lessons out of the child packet', () => {
+    const planned = planTask('查父级；补测试；写说明；第四件');
+    expect(planned.subtasks).toHaveLength(3);
+    expect(planned.truncated).toBe(true);
+    expect(planned.officialInstalled).toBe(false);
+    expect(planTask('再往下拆', 3)).toMatchObject({ ok: false, reason: 'depth-exceeded' });
+    const leaked = invokeSubtask({
+      subtask: { ...planned.subtasks[0], prompt: '先看父级容器' },
+      privateRecords: [{ lesson: '先看父级容器' }],
+      executor: () => ({ callId: 'should-not-run' }),
+    });
+    expect(leaked).toMatchObject({ invoked: false, reason: 'private-leak' });
+  });
+
+  it('counts a call only when an executor returns an id, and still does not verify delivery', () => {
+    const subtask = planTask('查父级').subtasks[0];
+    expect(invokeSubtask({ subtask })).toMatchObject({
+      invoked: false,
+      reason: 'no-live-executor',
+    });
+    expect(invokeSubtask({ subtask, inflight: 2, executor: () => ({ callId: 'x' }) }).reason).toBe(
+      'concurrency',
+    );
+    expect(
+      invokeSubtask({ subtask, budgetUsed: 3, executor: () => ({ callId: 'x' }) }).reason,
+    ).toBe('budget');
+    const called = invokeSubtask({
+      subtask,
+      executor: (packet) => {
+        expect(packet.privateMemory).toBeNull();
+        expect(packet.tool).toBe('create_assignment');
+        return { callId: 'assign-1', tool: 'create_assignment' };
+      },
+    });
+    expect(called).toMatchObject({ invoked: true, officialInstalled: false, callId: 'assign-1' });
+    expect(aggregate([called])).toMatchObject({
+      verified: false,
+      reason: 'needs-delivery-gate',
+      callIds: ['assign-1'],
+    });
   });
 });
 

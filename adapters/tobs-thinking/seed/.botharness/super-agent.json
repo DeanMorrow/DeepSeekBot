@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "role": "super-agent-contract",
+  "officialPackage": "deepseek-ai/dsh-superagent-prototype",
+  "officialInstalled": false,
+  "conflict": "dedicated-profile-and-unapproved-os-commands",
+  "parentTool": "create_assignment",
+  "forbiddenOnOrchestrator": ["bot_subagent", "subagent", "subagent_fork"],
+  "limits": { "maxDepth": 2, "maxConcurrent": 2, "maxSubtasks": 3, "maxBudget": 3 },
+  "childPermission": "assignment-grant-only",
+  "inheritsPrivateMemory": false
+}

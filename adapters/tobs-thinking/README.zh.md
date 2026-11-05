@@ -15,6 +15,20 @@
 
 你的 DSH 是 `0.2.2-alpha.2`。Tobs 文档里验证过的是 `0.2.0-rc.2`、`0.2.1-rc.2`、`0.2.1-rc.3`。alpha.2 不在这份名单里。种子按当前技能目录规则放置：会话工作目录所属项目根下的 `.dsh/skills/<名字>/SKILL.md`。`tobs create` 会给这份 Memory 单独建一个 Git 仓库，项目根就是 Memory 自己。如果只把文件放进另一个仓库的子目录，扫描会去看外层仓库，这些技能不会挂上。和 Bot 私聊时，会话就开在这份 Memory 里，所以技能有资格出现在目录中。派去工作区里干活的会话，工作目录是那个授权文件夹，技能扫描跟的是那里，不是 Memory。灵魂文字仍可能被放进提示，但那不等于技能正文已经读到。导入之后必须用活 Bot 实测，不能靠目录算通过。
 
+## super-agent
+
+每个新种子都带 `.botharness/super-agent.json` 和技能 `super-agent`。指定的旧 Bot 在上面的迁移里会一并补上。只有灵魂里写了这个词，不算配上。
+
+对照过的候选：
+
+- 要的是 `deepseek-ai/dsh-superagent-prototype`。它是 MIT 研究原型，单独的 DSH 档案，自带 router / worker 预设，看一个 GitHub 仓库，工人命令默认不再次审批，并改进程 PATH 和 git。官方要求不要和日常档案混用。
+- 不是商业 SuperAGI，也不是某一个 Bot 人设。
+- Tobs 预设里的 `bot_subagent` 只在派工会话里可用。编排会话会被现成守卫拦住，必须改走 `create_assignment`。有这个工具，不等于每个 Bot 已经启用官方 super-agent。
+
+两者抢执行核，也会把权限放大。所以官方包没有安装，`officialInstalled` 保持 false。契约只允许深度 2、同时 2 个、一共 3 次，子任务不继承私有记录。没有真实调用编号，就不能写成已经调用。
+
+本环境没有活 Bot。种子里的「思考基线」只有契约，没有调用证据。别的 Bot 在迁移之前都没有这份契约。
+
 ## 安装一个新 Bot
 
 在放着本仓库的机器上，进入 `adapters/tobs-thinking`。默认种子是 `seed`。代码岗先复制额外技能再创建：

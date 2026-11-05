@@ -16,6 +16,7 @@ import { inspectSkillFile } from '../lib/catalog.mjs';
 import { evaluateDelivery } from '../lib/gate.mjs';
 import { migrateSkills, rollbackSkills } from '../lib/migrate.mjs';
 import { productionWriteDecision } from '../lib/production-write.mjs';
+import { inspectBot, invokeSubtask, planTask } from '../lib/super-agent.mjs';
 
 function args(argv) {
   const out = { _: [] };
@@ -124,6 +125,17 @@ if (command === 'probe') {
   else ok(result);
 } else if (command === 'rollback') {
   ok(rollbackSkills(flags.target));
+} else if (command === 'super-agent-status') {
+  ok({ bot: inspectBot(flags.target ?? '.') });
+} else if (command === 'super-agent-plan') {
+  const planned = planTask(flags.task ?? '', flags.depth ? Number(flags.depth) : 1);
+  if (!planned.ok) fail(planned.reason);
+  else ok(planned);
+} else if (command === 'super-agent-invoke') {
+  const planned = planTask(flags.task ?? '');
+  const subtask = planned.subtasks?.[0];
+  if (!planned.ok || subtask === undefined) fail(planned.reason ?? 'empty-task');
+  else ok(invokeSubtask({ subtask, inflight: flags.inflight ? Number(flags.inflight) : 0 }));
 } else {
   fail('usage');
 }
