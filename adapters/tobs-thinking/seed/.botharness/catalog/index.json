@@ -1,19 +1,29 @@
 {
+  "schemaVersion": 1,
+  "id": "tobs-thinking-catalog",
+  "role": "registry",
+  "entry": ".botharness/catalog/index.json",
+  "owner": "tobs-thinking-seed",
+  "brief": "只登记有哪些清单、各自的职责和唯一入口。不收录条目全文，也不收录私有清单的标题或路径。",
   "version": 1,
-  "categories": [
+  "updatedAt": "2026-11-05T20:49:00.000Z",
+  "status": "active",
+  "inventories": [
     {
       "id": "skills",
-      "inventory": ".botharness/catalog/skills.json",
-      "visibility": "bot-local"
-    },
-    { "id": "bots", "inventory": null, "visibility": "bot-local" },
-    { "id": "plugin-tools", "inventory": null, "visibility": "bot-local" },
-    { "id": "modules", "inventory": null, "visibility": "bot-local" },
-    { "id": "templates", "inventory": null, "visibility": "bot-local" },
+      "brief": "本 Bot 记忆里已放置的技能简介。正文在各自的 SKILL 文件。",
+      "entry": ".botharness/catalog/skills.json",
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "active"
+    }
+  ],
+  "revisions": [
     {
-      "id": "retrospectives",
-      "inventory": "memory/private/retrospective-index.json",
-      "visibility": "private"
+      "version": 1,
+      "reason": "register the skill brief inventory",
+      "verification": "entries-exist"
     }
   ]
 }

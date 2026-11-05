@@ -6,6 +6,10 @@ import { addPrivate } from './bank.mjs';
 export const INVENTORY_THRESHOLD = 4;
 export const BRIEF_LIMIT = 160;
 export const GROUP_AT = 12;
+export const SCHEMA_VERSION = 1;
+export const REGISTRY_ENTRY = '.botharness/catalog/index.json';
+export const REGISTRY_ID = 'tobs-thinking-catalog';
+export const REGISTRY_OWNER = 'tobs-thinking-seed';
 
 export function skillDirs(root) {
   const base = join(root, '.dsh', 'skills');
@@ -56,19 +60,91 @@ export function groupBriefs(items, groupAt = GROUP_AT) {
   };
 }
 
-export function readIndex(index, actor, owner) {
-  const categories = (index.categories ?? []).filter((category) => {
-    if (category.visibility !== 'private') return true;
-    return actor === owner;
-  });
+function privateLeak(value) {
+  const raw = typeof value === 'string' ? value : JSON.stringify(value);
+  return (
+    raw.includes('memory/private') ||
+    raw.includes('"visibility":"private"') ||
+    raw.includes('"visibility": "private"')
+  );
+}
+
+/** Client payload. Drops private paths before anything is sent. The public file must already be clean. */
+export function publicView(registry) {
+  const inventories = (registry.inventories ?? [])
+    .filter((item) => item.visibility !== 'private' && !privateLeak(item))
+    .map((item) => ({
+      id: item.id,
+      brief: item.brief,
+      entry: item.entry,
+      owner: item.owner,
+      version: item.version,
+      updatedAt: item.updatedAt,
+      status: item.status,
+      ...(item.replacement === undefined ? {} : { replacement: item.replacement }),
+    }));
   return {
-    version: index.version,
-    categories: categories.map((category) => ({
-      id: category.id,
-      inventory: category.visibility === 'private' && actor !== owner ? null : category.inventory,
-      visibility: category.visibility,
-    })),
+    schemaVersion: registry.schemaVersion,
+    id: registry.id,
+    role: 'registry',
+    entry: REGISTRY_ENTRY,
+    owner: registry.owner,
+    brief: registry.brief,
+    version: registry.version,
+    updatedAt: registry.updatedAt,
+    status: registry.status,
+    inventories,
   };
+}
+
+function bump(registry, reason, at, inventories) {
+  const version = registry.version + 1;
+  return {
+    ...registry,
+    version,
+    updatedAt: at,
+    inventories,
+    revisions: [
+      ...(registry.revisions ?? []),
+      { version, reason, verification: 'registry-updated-with-inventory' },
+    ],
+  };
+}
+
+export function renameInventory(registry, { id, entry, reason, at }) {
+  if (!registry.inventories.some((item) => item.id === id))
+    return { ok: false, reason: 'missing-inventory' };
+  if (
+    entry === REGISTRY_ENTRY ||
+    registry.inventories.some((item) => item.entry === entry && item.id !== id)
+  ) {
+    return { ok: false, reason: 'duplicate-entry' };
+  }
+  const inventories = registry.inventories.map((item) =>
+    item.id === id ? { ...item, entry, version: item.version + 1, updatedAt: at } : item,
+  );
+  return { ok: true, registry: bump(registry, reason, at, inventories) };
+}
+
+export function disableInventory(registry, { id, replacement, reason, at }) {
+  if (!replacement) return { ok: false, reason: 'replacement-required' };
+  if (!registry.inventories.some((item) => item.id === id))
+    return { ok: false, reason: 'missing-inventory' };
+  const inventories = registry.inventories.map((item) =>
+    item.id === id
+      ? { ...item, status: 'disabled', replacement, version: item.version + 1, updatedAt: at }
+      : item,
+  );
+  return { ok: true, registry: bump(registry, reason, at, inventories) };
+}
+
+export function recordInventoryChange(registry, id, { version, reason, at }) {
+  if (!registry.inventories.some((item) => item.id === id))
+    return { ok: false, reason: 'missing-inventory' };
+  const inventories = registry.inventories.map((item) =>
+    item.id === id ? { ...item, version, updatedAt: at } : item,
+  );
+  return { ok: true, registry: bump(registry, reason, at, inventories) };
 }
 
 export function checkInventory(root, index) {
@@ -76,13 +152,16 @@ export function checkInventory(root, index) {
   const raw = JSON.stringify(index);
   if (raw.includes('"items"') || raw.includes('SKILL.md')) problems.push('index-holds-details');
   const skills = skillDirs(root);
-  const listed = index.categories ?? [];
-  const skillsCategory = listed.find((category) => category.id === 'skills');
-  if (skills.length >= INVENTORY_THRESHOLD && !skillsCategory?.inventory) {
+  const listed = index.inventories ?? [];
+  const skillsCategory = listed.find(
+    (category) => category.id === 'skills' && category.status !== 'disabled',
+  );
+  const inventoryRel = skillsCategory?.entry ?? skillsCategory?.inventory;
+  if (skills.length >= INVENTORY_THRESHOLD && !inventoryRel) {
     problems.push('skills-need-inventory');
   }
-  if (!skillsCategory?.inventory) return { ok: problems.length === 0, problems };
-  const inventoryPath = join(root, skillsCategory.inventory);
+  if (!inventoryRel) return { ok: problems.length === 0, problems };
+  const inventoryPath = join(root, inventoryRel);
   if (!existsSync(inventoryPath)) {
     problems.push('skills-inventory-missing');
     return { ok: false, problems };
@@ -117,7 +196,101 @@ export function checkInventory(root, index) {
   ) {
     problems.push('revision-incomplete');
   }
+  if (inventory.registryId !== undefined && inventory.registryId !== skillsCategory.id) {
+    problems.push('drift:skills');
+  }
+  if (
+    inventory.version !== undefined &&
+    skillsCategory.version !== undefined &&
+    inventory.version !== skillsCategory.version
+  ) {
+    problems.push('drift:skills-version');
+  }
   return { ok: problems.length === 0, problems, inventory };
+}
+
+export function checkRegistry(root) {
+  const registryPath = join(root, REGISTRY_ENTRY);
+  if (!existsSync(registryPath)) return { ok: false, problems: ['registry-missing'] };
+  const raw = readFileSync(registryPath, 'utf8');
+  const registry = JSON.parse(raw);
+  const problems = [];
+  if (privateLeak(raw)) problems.push('private-path-in-public-registry');
+  if (registry.schemaVersion !== SCHEMA_VERSION) problems.push('schema-version');
+  if (
+    registry.role !== 'registry' ||
+    registry.entry !== REGISTRY_ENTRY ||
+    registry.owner !== REGISTRY_OWNER
+  ) {
+    problems.push('registry-identity');
+  }
+  if (!registry.brief || !registry.version || !registry.updatedAt || !registry.status)
+    problems.push('registry-incomplete');
+  const entries = registry.inventories ?? [];
+  if (
+    entries.some(
+      (item) => item.inventories || item.role === 'registry' || item.entry === REGISTRY_ENTRY,
+    )
+  ) {
+    problems.push('nested-registry');
+  }
+  const ids = entries.map((item) => item.id);
+  const paths = entries.map((item) => item.entry);
+  if (new Set(ids).size !== ids.length) problems.push('duplicate-inventory-id');
+  if (new Set(paths).size !== paths.length) problems.push('duplicate-truth-source');
+  for (const item of entries) {
+    if (
+      !item.id ||
+      !item.brief ||
+      !item.entry ||
+      !item.owner ||
+      !item.version ||
+      !item.updatedAt ||
+      !item.status
+    ) {
+      problems.push(`incomplete-inventory:${item.id ?? 'unknown'}`);
+    }
+    const target = join(root, item.entry ?? '');
+    const present = item.entry && existsSync(target);
+    if (item.status === 'active' && !present) problems.push(`dead-entry:${item.id}`);
+    if (item.status === 'disabled' && !item.replacement)
+      problems.push(`disabled-without-replacement:${item.id}`);
+    if (present && item.status === 'active') {
+      const body = JSON.parse(readFileSync(target, 'utf8'));
+      if (body.role === 'registry') problems.push(`nested-registry:${item.id}`);
+      if (body.registryId !== item.id) problems.push(`drift:${item.id}`);
+      if (body.version !== item.version) problems.push(`drift:${item.id}-version`);
+    }
+  }
+  const catalogDir = join(root, '.botharness', 'catalog');
+  if (existsSync(catalogDir)) {
+    for (const name of readdirSync(catalogDir)) {
+      if (!name.endsWith('.json') || name === 'index.json') continue;
+      const relative = `.botharness/catalog/${name}`;
+      if (!paths.includes(relative)) problems.push(`unlisted-inventory:${relative}`);
+    }
+  }
+  problems.push(...checkInventory(root, registry).problems);
+  const view = publicView(registry);
+  if (privateLeak(view)) problems.push('public-view-leaks');
+  return { ok: problems.length === 0, problems, publicView: view };
+}
+
+export function readPublicCatalog(root) {
+  const checked = checkRegistry(root);
+  if (!checked.publicView) return checked;
+  const inventories = [];
+  for (const item of checked.publicView.inventories) {
+    if (item.status !== 'active') continue;
+    const body = JSON.parse(readFileSync(join(root, item.entry), 'utf8'));
+    inventories.push({ id: item.id, briefs: (body.items ?? []).map(briefOf) });
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    registry: checked.publicView,
+    inventories,
+    problems: checked.problems,
+  };
 }
 
 export function findLocalSkill(inventory, query) {
@@ -212,12 +385,9 @@ export function checkPrivate(store, actor) {
 
 export function appendSkillBrief(inventory, item, reason) {
   if (inventory.items.some((current) => current.id === item.id)) return inventory;
-  return {
-    ...inventory,
-    items: [...inventory.items, item],
-    revisions: [
-      ...inventory.revisions,
-      { version: inventory.revisions.length + 1, reason, verification: 'entry-exists' },
-    ],
-  };
+  const revisions = [
+    ...inventory.revisions,
+    { version: inventory.revisions.length + 1, reason, verification: 'entry-exists' },
+  ];
+  return { ...inventory, version: revisions.length, items: [...inventory.items, item], revisions };
 }

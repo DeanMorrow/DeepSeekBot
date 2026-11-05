@@ -21,9 +21,13 @@ import {
   checkInventory,
   checkPrivate,
   findLocalSkill,
+  checkRegistry,
+  disableInventory,
   groupBriefs,
-  readIndex,
+  publicView,
   readPrivateTitles,
+  readPublicCatalog,
+  renameInventory,
 } from '../../adapters/tobs-thinking/seed/lib/inventory.mjs';
 import {
   migrateSkills,
@@ -469,9 +473,9 @@ describe('asset inventory', () => {
     const index = JSON.parse(readFileSync(join(seed, '.botharness/catalog/index.json'), 'utf8'));
     const skills = JSON.parse(readFileSync(join(seed, '.botharness/catalog/skills.json'), 'utf8'));
     expect(JSON.stringify(index)).not.toContain('the-top-thinking');
-    expect(readIndex(index, 'bot-b', 'bot-a').categories.map((item) => item.id)).not.toContain(
-      'retrospectives',
-    );
+    expect(JSON.stringify(index)).not.toContain('memory/private');
+    expect(checkRegistry(seed).ok).toBe(true);
+    expect(JSON.stringify(readPublicCatalog(seed))).not.toContain('memory/private');
     expect(checkInventory(seed, index).ok).toBe(true);
     const found = findLocalSkill(skills, '根因');
     expect(found).toMatchObject({ hit: true, detailLoaded: false });
@@ -498,8 +502,12 @@ describe('asset inventory', () => {
       writeFileSync(join(dir, '.dsh/skills', name, 'SKILL.md'), 'x');
     }
     const bare = {
+      schemaVersion: 1,
+      role: 'registry',
+      entry: '.botharness/catalog/index.json',
+      owner: 'tobs-thinking-seed',
       version: 1,
-      categories: [{ id: 'skills', inventory: null, visibility: 'bot-local' }],
+      inventories: [],
     };
     expect(checkInventory(dir, bare).ok).toBe(true);
     mkdirSync(join(dir, '.dsh/skills/four'), { recursive: true });
@@ -547,6 +555,49 @@ describe('asset inventory', () => {
     );
     expect(reported.report.installGranted).toBe(false);
     expect(evaluateDelivery({ declaredKind: 'progress' }).passed).toBe(false);
+    const registry = JSON.parse(readFileSync(join(seed, '.botharness/catalog/index.json'), 'utf8'));
+    const renamed = renameInventory(registry, {
+      id: 'skills',
+      entry: '.botharness/catalog/skills-v2.json',
+      reason: 'rename the skill inventory',
+      at: '2026-11-05T21:00:00.000Z',
+    });
+    expect(renamed.registry.version).toBe(registry.version + 1);
+    expect(renamed.registry.revisions.at(-1).reason).toBe('rename the skill inventory');
+    const moved = temp('renamed-registry-');
+    cpSync(seed, moved, { recursive: true });
+    writeFileSync(join(moved, '.botharness/catalog/index.json'), JSON.stringify(renamed.registry));
+    expect(checkRegistry(moved).problems).toEqual(
+      expect.arrayContaining([
+        'dead-entry:skills',
+        'unlisted-inventory:.botharness/catalog/skills.json',
+      ]),
+    );
+    const stopped = disableInventory(registry, {
+      id: 'skills',
+      replacement: '.botharness/catalog/skills.json',
+      reason: 'stop the skill inventory',
+      at: '2026-11-05T21:00:00.000Z',
+    });
+    expect(stopped.registry.inventories[0]).toMatchObject({ status: 'disabled' });
+    const poisoned = structuredClone(registry);
+    poisoned.inventories.push({
+      id: 'retrospectives',
+      brief: '秘密标题',
+      entry: 'memory/private/retrospective-index.json',
+      owner: 'bot-a',
+      version: 1,
+      updatedAt: '2026-11-05T21:00:00.000Z',
+      status: 'active',
+      visibility: 'private',
+    });
+    const view = JSON.stringify(publicView(poisoned));
+    expect(view).not.toContain('memory/private');
+    expect(view).not.toContain('秘密标题');
+    const leaked = temp('leaked-registry-');
+    cpSync(seed, leaked, { recursive: true });
+    writeFileSync(join(leaked, '.botharness/catalog/index.json'), JSON.stringify(poisoned));
+    expect(checkRegistry(leaked).problems).toContain('private-path-in-public-registry');
   });
 });
 

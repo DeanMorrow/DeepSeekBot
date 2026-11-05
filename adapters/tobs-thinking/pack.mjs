@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { appendSkillBrief } from './seed/lib/inventory.mjs';
+import { appendSkillBrief, recordInventoryChange } from './seed/lib/inventory.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 
@@ -27,27 +27,33 @@ export function stageSeed(dest, { code = false } = {}) {
       },
     );
     const inventoryPath = join(dest, '.botharness/catalog/skills.json');
-    const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'));
-    writeFileSync(
-      inventoryPath,
-      `${JSON.stringify(
-        appendSkillBrief(
-          inventory,
-          {
-            id: 'ecc-code-baseline',
-            name: '代码岗基线',
-            brief: '代码岗按需的四条流程，不是 ECC 整包。',
-            entry: '.dsh/skills/ecc-code-baseline/SKILL.md',
-            status: 'active',
-            version: 1,
-            owner: 'tobs-thinking-seed',
-          },
-          'code seed adds the optional code skill',
-        ),
-        null,
-        2,
-      )}\n`,
+    const registryPath = join(dest, '.botharness/catalog/index.json');
+    const at = '2026-11-05T20:49:00.000Z';
+    const nextInventory = appendSkillBrief(
+      JSON.parse(readFileSync(inventoryPath, 'utf8')),
+      {
+        id: 'ecc-code-baseline',
+        name: '代码岗基线',
+        brief: '代码岗按需的四条流程，不是 ECC 整包。',
+        entry: '.dsh/skills/ecc-code-baseline/SKILL.md',
+        status: 'active',
+        version: 1,
+        owner: 'tobs-thinking-seed',
+      },
+      'code seed adds the optional code skill',
     );
+    const nextRegistry = recordInventoryChange(
+      JSON.parse(readFileSync(registryPath, 'utf8')),
+      'skills',
+      {
+        version: nextInventory.version,
+        reason: 'code seed adds the optional code skill',
+        at,
+      },
+    );
+    writeFileSync(inventoryPath, `${JSON.stringify(nextInventory, null, 2)}\n`);
+    if (nextRegistry.ok)
+      writeFileSync(registryPath, `${JSON.stringify(nextRegistry.registry, null, 2)}\n`);
   }
 }
 

@@ -17,7 +17,7 @@ import { evaluateDelivery } from '../lib/gate.mjs';
 import { migrateSkills, rollbackSkills } from '../lib/migrate.mjs';
 import { productionWriteDecision } from '../lib/production-write.mjs';
 import { inspectBot, invokeSubtask, planTask } from '../lib/super-agent.mjs';
-import { checkInventory, findLocalSkill } from '../lib/inventory.mjs';
+import { checkRegistry, findLocalSkill } from '../lib/inventory.mjs';
 
 function args(argv) {
   const out = { _: [] };
@@ -133,10 +133,7 @@ if (command === 'probe') {
   if (!planned.ok) fail(planned.reason);
   else ok(planned);
 } else if (command === 'catalog-check') {
-  const index = JSON.parse(
-    readFileSync(join(flags.target ?? '.', '.botharness/catalog/index.json'), 'utf8'),
-  );
-  ok(checkInventory(flags.target ?? '.', index));
+  ok(checkRegistry(flags.target ?? '.'));
 } else if (command === 'skill-find') {
   const skills = JSON.parse(
     readFileSync(join(flags.target ?? '.', '.botharness/catalog/skills.json'), 'utf8'),

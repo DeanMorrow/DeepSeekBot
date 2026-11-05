@@ -1,5 +1,8 @@
 {
+  "role": "inventory",
+  "registryId": "skills",
   "version": 1,
+  "updatedAt": "2026-11-05T20:49:00.000Z",
   "items": [
     {
       "id": "the-top-thinking",
