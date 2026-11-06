@@ -14,9 +14,9 @@ import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai
 
 ## 修正包
 
-不要安装 `1.6.1-fork.0e1461c18.1`、`1.6.1-fork.1c6ade932.1`、`1.6.1-fork.a90859f35.1`、`1.6.1-fork.73b920dc3.1` 或 `1.6.1-fork.d2c1e89ca.1`。当前包是 `1.6.1-fork.73d1c1d14.1`，源提交 `73d1c1d14a97b20e5c8e1fe078067ba9ac28eca3`，Core SHA256 `6d32e6b666f8162d6554a515ec774f6c38ff42bfaaeb5aacd4bb3524036a8c41`，锁文件 SHA256 `05b383b7561a7ac285e7ee40dbb6e89929b7dc2876306fb877ad66627328e668`，目录 `tobs-fork-73d1c1d14`。这不是 `73b920dc3`。人类消息正文不能封存。Host 创建可能产生模型费用。真模型和 Windows 未测。前三轮、73b 和 d2 仍未通过。73d 仍是当前安装审核对象，不是产品通过。全局清单源是后加的 Host 能力，配置见 `CATALOG-CONTRACT.zh.md`，不替换这次 73d 安装审核。
+不要安装 `1.6.1-fork.0e1461c18.1`、`1.6.1-fork.1c6ade932.1`、`1.6.1-fork.a90859f35.1`、`1.6.1-fork.73b920dc3.1`、`1.6.1-fork.d2c1e89ca.1` 或 `1.6.1-fork.450c89282.1`。当前包是 `1.6.1-fork.73d1c1d14.1`，源提交 `73d1c1d14a97b20e5c8e1fe078067ba9ac28eca3`，Core SHA256 `6d32e6b666f8162d6554a515ec774f6c38ff42bfaaeb5aacd4bb3524036a8c41`，锁文件 SHA256 `05b383b7561a7ac285e7ee40dbb6e89929b7dc2876306fb877ad66627328e668`，目录 `tobs-fork-73d1c1d14`。这不是 `73b920dc3`。人类消息正文不能封存。Host 创建可能产生模型费用。真模型和 Windows 未测。前三轮、73b 和 d2 仍未通过。73d 仍是当前安装审核对象，不是产品通过。全局清单源是后加的 Host 能力，配置见 `CATALOG-CONTRACT.zh.md`，不替换这次 73d 安装审核。
 
-实际写入 dependencies 的是 8 个，不只下面曾经点名的 3 个：`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、`dsh-subagent`、`dsh-tool-bash`、`dsh-tool-pwsh`、`dsh-tools`。交付目录 `closure/` 有这 8 个 registry tarball，sha512 与 lock 一致。peer 不在其中。13 个产品包加这 8 个文件不是离线整包。
+实际写入 dependencies 的是 8 个，不只下面曾经点名的 3 个：`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、`dsh-subagent`、`dsh-tool-bash`、`dsh-tool-pwsh`、`dsh-tools`。交付目录 `closure/` 有这 8 个 registry tarball，sha512 与 lock 一致。它们不是离线整包。整包 `import '@botharness/core'` 还需要 `@deepseek-ai/cordis@4.0.5`，它现在写在 `@botharness/core` 的 dependencies 里。有网络时安装 core tarball 会拉它。没有网络、又只拿 closure 的 8 个文件，导入仍会 `ERR_MODULE_NOT_FOUND`。正式导出入口是 `readAuthorizedOpsCatalog`，检查脚本是 `node scripts/catalog-source-export-check.mjs`。制作方测试数量不是独立通过。
 
 在独立 DSH `0.2.2-alpha.2` 上，Host 加载 Core 时这 8 个解析到档案里的 `0.2.1-rc.3`，DSH 自己的安装树是 `0.2.2-alpha.2`。`SessionId` 运行时是原字符串，两边 Map 能对上。同一进程的 `bot-sessions` 和 `bot-tool pack_catalog` 都退出码 0。没有会话身份异常，所以没有改解析器。
 

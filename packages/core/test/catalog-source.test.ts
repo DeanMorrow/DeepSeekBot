@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -42,7 +42,10 @@ function writeRegistry(root: string, registry: unknown = REGISTRY) {
     JSON.stringify({
       registryId: 'skills',
       version: 2,
-      items: [{ id: 'skill-a', name: 'Skill A', brief: '一项技能' }],
+      items: [
+        { id: 'skill-a', name: 'Skill A', brief: '一项技能' },
+        { id: 'hidden', name: '/tmp/secret', brief: '私有', visibility: 'private' },
+      ],
     }),
   );
   writeFileSync(
@@ -180,5 +183,93 @@ describe('authorized ops catalog source', () => {
     expect(row?.briefs).toHaveLength(2);
     const bee = readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'bee' });
     expect(bee.inventories).toEqual([]);
+  });
+
+  it('keeps ordinary slashes and URLs, and still drops real paths', () => {
+    const root = createTempRoot('catalog-source-');
+    const samples = [
+      ['ui', 'UI/UX patterns'],
+      ['ratio', 'a/b ratio'],
+      ['zh', '界面说明：技能/模块对照'],
+      ['url', '用途见 https://example.com/docs/guide'],
+    ];
+    const leaks = [
+      '/etc/passwd',
+      '/workspace/kb/secret',
+      'C:\\Users\\secret',
+      'C:/Users/secret',
+      '\\\\server\\share\\secret',
+      '//server/share/secret',
+      '../memory/private',
+      '..\\memory\\private',
+      '%2e%2e%2fmemory%2fprivate',
+      '%2Fetc%2Fpasswd',
+      'file:///etc/passwd',
+    ];
+    const config = writeRegistry(root, {
+      ...REGISTRY,
+      inventories: [
+        ...samples.map(([id, brief]) => ({
+          id,
+          brief,
+          version: 1,
+          updatedAt: '2026-11-06T00:00:00.000Z',
+          status: 'unpopulated',
+          entry: null,
+        })),
+        ...leaks.map((brief, index) => ({
+          id: `leak-${index}`,
+          brief,
+          version: 1,
+          updatedAt: '2026-11-06T00:00:00.000Z',
+          status: 'unpopulated',
+          entry: null,
+        })),
+      ],
+    });
+    const view = readAuthorizedOpsCatalog(config, { kind: 'profile-owner' });
+    expect(
+      view.inventories.filter((item) => item.status === 'unpopulated').map((item) => item.brief),
+    ).toEqual(samples.map(([, brief]) => brief));
+    expect(
+      view.inventories
+        .filter((item) => item.id.startsWith('leak-'))
+        .every((item) => item.brief === null && item.status === 'invalid'),
+    ).toBe(true);
+    expect(JSON.stringify(view)).not.toContain('/etc/passwd');
+    expect(JSON.stringify(view)).not.toContain('Users');
+  });
+
+  it('rejects a private override, an encoded escape, and a symlink swapped in before open', () => {
+    const root = createTempRoot('catalog-source-');
+    const config = writeRegistry(root, {
+      ...REGISTRY,
+      inventories: [
+        REGISTRY.inventories[0],
+        { ...REGISTRY.inventories[0], id: 'skills', visibility: 'private' },
+      ],
+    });
+    expect(readAuthorizedOpsCatalog(config, { kind: 'profile-owner' }).status).toBe('invalid');
+    const escaped = writeRegistry(root, {
+      ...REGISTRY,
+      inventories: [{ ...REGISTRY.inventories[0], entry: '%2e%2e%2fsecret.json' }],
+    });
+    expect(
+      readAuthorizedOpsCatalog(escaped, { kind: 'profile-owner' }).inventories[0]?.status,
+    ).toBe('unreachable');
+    const live = writeRegistry(root);
+    expect(readAuthorizedOpsCatalog(live, { kind: 'profile-owner' }).inventories[0]?.status).toBe(
+      'active',
+    );
+    const skills = join(root, 'official', 'skills.json');
+    unlinkSync(skills);
+    symlinkSync(join(root, 'official', 'modules.json'), skills);
+    const opened = openAuthorizedOpsEntry(
+      live,
+      { kind: 'profile-owner' },
+      'ops:asset-catalog#skills',
+    );
+    expect(opened.status).toBe('unreachable');
+    expect(opened.items).toEqual([]);
   });
 });

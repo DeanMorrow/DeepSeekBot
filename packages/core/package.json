@@ -17,6 +17,7 @@
   "dependencies": {
     "@botharness/pixel-avatar": "0.10.1",
     "@botharness/pixel-banner": "0.1.0",
+    "@deepseek-ai/cordis": "4.0.5",
     "@deepseek-ai/dsh-agent": "0.2.1-rc.3",
     "@deepseek-ai/dsh-compaction": "0.2.1-rc.3",
     "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
@@ -40,7 +41,6 @@
     "ws": "8.21.3"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.5",
     "@deepseek-ai/dsh-attachment": "0.2.1-rc.3",
     "@deepseek-ai/dsh-credentials": "0.2.1-rc.3",
     "@deepseek-ai/dsh-credentials-local": "0.2.1-rc.3",

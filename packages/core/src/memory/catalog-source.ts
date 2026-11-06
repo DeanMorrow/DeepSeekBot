@@ -48,8 +48,37 @@ function fingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
+const PURPOSE_URL = /https?:\/\/[^\s<>"'`]+/gi;
+
+function decodePathEncodings(value: string): string {
+  let current = value;
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const next = decodeURIComponent(current);
+      if (next === current) return current;
+      current = next;
+    } catch {
+      return current;
+    }
+  }
+  return current;
+}
+
+function hasFilesystemPath(value: string): boolean {
+  if (/(?:^|[^\w])[A-Za-z]:[\\/]/.test(value)) return true;
+  if (/(?:^|[\s"'`(])\\\\[^\s\\]/.test(value)) return true;
+  if (/file:/i.test(value)) return true;
+  const prose = value.replace(PURPOSE_URL, ' ');
+  if (/(?:^|[\s"'`(])\/\/[^\s/]+[\\/]/.test(prose)) return true;
+  if (/(?:^|[\s"'`(])\/(?!\/)[\w.~-]/.test(prose)) return true;
+  if (/(?:^|[\s\\/])\.\.(?:[\\/]|$)/.test(prose)) return true;
+  if (/(?:^|[\s"'`(])\\[^\s\\]/.test(prose)) return true;
+  if (/\\[^\\]+\\/.test(prose)) return true;
+  return false;
+}
+
 function leaksPath(value: string): boolean {
-  return value.includes('/') || value.includes('\\') || /^[A-Za-z]:/.test(value);
+  return hasFilesystemPath(value) || hasFilesystemPath(decodePathEncodings(value));
 }
 
 function cleanText(value: unknown, limit: number): string | undefined {
@@ -84,8 +113,18 @@ function readJson(path: string): unknown {
 }
 
 function containedFile(root: string, relative: string): string | undefined {
-  if (isAbsolute(relative) || relative.includes('\0')) return undefined;
-  const resolved = resolveContained(root, relative);
+  const decoded = decodePathEncodings(relative);
+  if (
+    decoded !== relative &&
+    (decoded.includes('\0') ||
+      decoded.includes('\\') ||
+      isAbsolute(decoded) ||
+      decoded.split('/').includes('..'))
+  ) {
+    return undefined;
+  }
+  if (isAbsolute(relative) || relative.includes('\0') || relative.includes('\\')) return undefined;
+  const resolved = resolveContained(root, decoded === relative ? relative : decoded);
   if (!resolved.ok || resolved.path === undefined) return undefined;
   try {
     if (lstatSync(resolved.path).isSymbolicLink() || !lstatSync(resolved.path).isFile())
@@ -99,6 +138,7 @@ function containedFile(root: string, relative: string): string | undefined {
 interface RegistryInventory {
   id: string;
   brief: string | null;
+  briefRejected: boolean;
   version: number | null;
   updatedAt: string | null;
   entry: string | null;
@@ -110,14 +150,21 @@ function inventoriesOf(value: unknown): RegistryInventory[] | undefined {
   const rows = (value as { inventories?: unknown }).inventories;
   if (!Array.isArray(rows)) return undefined;
   const parsed: RegistryInventory[] = [];
+  const seen = new Set<string>();
   for (const row of rows) {
     if (typeof row !== 'object' || row === null) return undefined;
     const record = row as Record<string, unknown>;
     if (typeof record.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(record.id))
       return undefined;
+    if (seen.has(record.id)) return undefined;
+    seen.add(record.id);
+    if (record.visibility === 'private' || record.private === true) continue;
+    const brief = cleanText(record.brief, 160) ?? null;
     parsed.push({
       id: record.id,
-      brief: cleanText(record.brief, 160) ?? null,
+      brief,
+      briefRejected:
+        typeof record.brief === 'string' && record.brief.trim() !== '' && brief === null,
       version: typeof record.version === 'number' ? record.version : null,
       updatedAt: cleanText(record.updatedAt, 40) ?? null,
       entry: typeof record.entry === 'string' ? record.entry : null,
@@ -196,7 +243,7 @@ function categoryView(root: string, row: RegistryInventory): CatalogInventoryVie
     version: row.version,
     updatedAt: row.updatedAt,
   };
-  if (row.brief === null && row.status !== 'unpopulated') {
+  if (row.briefRejected || (row.brief === null && row.status !== 'unpopulated')) {
     return { ...base, entryRef: null, status: 'invalid' };
   }
   if (row.status === 'unpopulated' || row.entry === null) {
@@ -258,7 +305,10 @@ export function openAuthorizedOpsEntry(
   };
   const view = readAuthorizedOpsCatalog(configPath, caller);
   if (view.status !== 'active') return { ...refused, reason: view.status, status: view.status };
-  const row = view.inventories.find((item) => item.entryRef === entryRef);
+  const id = entryRef.startsWith(`${OPS_CATALOG_SOURCE}#`)
+    ? entryRef.slice(OPS_CATALOG_SOURCE.length + 1)
+    : '';
+  const row = view.inventories.find((item) => item.entryRef === entryRef || item.id === id);
   if (row === undefined) return { ...refused, reason: 'entry-unknown', status: 'unauthorized' };
   if (row.status !== 'active' || row.entryRef === null) {
     return { ...refused, reason: row.status, status: row.status };
@@ -272,6 +322,7 @@ export function openAuthorizedOpsEntry(
   if (file === undefined) return { ...refused, reason: 'unreachable', status: 'unreachable' };
   const parsed = readJson(file) as { items?: Array<Record<string, unknown>> };
   const items = (parsed.items ?? []).flatMap((item) => {
+    if (item.visibility === 'private' || item.private === true) return [];
     const id = cleanText(item.id, 64);
     const name = cleanText(item.name, 80);
     const brief = cleanText(item.brief, 160);
