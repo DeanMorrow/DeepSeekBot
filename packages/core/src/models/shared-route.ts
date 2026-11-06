@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto';
 import type { OperationalDatabaseModulePort } from '../database/owner.js';
 
 export type ModelCapability = 'chat' | 'image' | 'video';
-export type ModelProtocol = 'openai-chat' | 'openai-images' | 'openai-videos' | 'official-native';
+export type ModelProtocol =
+  | 'openai-chat'
+  | 'openai-images'
+  | 'openai-videos'
+  | 'anthropic-messages'
+  | 'apiyi-seedance'
+  | 'official-native';
 export type ModelGateway = 'apiyi' | 'official';
 export type RouteConsumer = 'chat' | 'concept-art';
 
@@ -21,7 +27,10 @@ export interface PublicInstance {
   protocol: ModelProtocol;
   baseUrl: string;
   models: string[];
+  credentialRef: string;
   credentialConfigured: boolean;
+  /** A stored key does not prove the token group covers this model. */
+  groupCoverage: 'unverified';
 }
 
 export interface InstanceSpec {
@@ -32,15 +41,21 @@ export interface InstanceSpec {
   protocol: ModelProtocol;
   baseUrl: string;
   models: readonly string[];
+  credentialRef: string;
 }
 
-const APIYI_BASE = 'https://api.apiyi.com/v1';
+const APIYI_OPENAI = 'https://api.apiyi.com/v1';
+const APIYI_ROOT = 'https://api.apiyi.com';
 
-const PROTOCOL_CAPABILITY: Record<ModelProtocol, ModelCapability | 'official'> = {
-  'openai-chat': 'chat',
-  'openai-images': 'image',
-  'openai-videos': 'video',
-  'official-native': 'official',
+const APIYI_PROTOCOL: Record<
+  Exclude<ModelProtocol, 'official-native'>,
+  { capability: ModelCapability; baseUrl: string }
+> = {
+  'openai-chat': { capability: 'chat', baseUrl: APIYI_OPENAI },
+  'openai-images': { capability: 'image', baseUrl: APIYI_OPENAI },
+  'openai-videos': { capability: 'video', baseUrl: APIYI_OPENAI },
+  'anthropic-messages': { capability: 'chat', baseUrl: APIYI_ROOT },
+  'apiyi-seedance': { capability: 'video', baseUrl: APIYI_ROOT },
 };
 
 export class SharedRouteError extends Error {
@@ -88,16 +103,17 @@ function assertProtocol(spec: InstanceSpec): void {
     if (spec.protocol === 'official-native') {
       throw new SharedRouteError('protocol-mismatch', 'API易 needs one of its verified protocols.');
     }
-    if (PROTOCOL_CAPABILITY[spec.protocol] !== spec.capability) {
+    const verified = APIYI_PROTOCOL[spec.protocol];
+    if (verified.capability !== spec.capability) {
       throw new SharedRouteError(
         'protocol-mismatch',
         'That API易 protocol does not serve this capability.',
       );
     }
-    if (spec.baseUrl !== APIYI_BASE) {
+    if (spec.baseUrl !== verified.baseUrl) {
       throw new SharedRouteError(
         'protocol-mismatch',
-        'API易 verified calls use https://api.apiyi.com/v1.',
+        'That API易 protocol uses a different base URL.',
       );
     }
     return;
@@ -152,7 +168,9 @@ export function createSharedModelRoute(
     protocol: stored.protocol,
     baseUrl: stored.baseUrl,
     models: [...stored.models],
-    credentialConfigured: await secrets.configured(stored.id),
+    credentialRef: stored.credentialRef,
+    credentialConfigured: await secrets.configured(stored.credentialRef),
+    groupCoverage: 'unverified',
   });
 
   const assertConsumer = (consumer: RouteConsumer, capability: ModelCapability): void => {
@@ -192,7 +210,7 @@ export function createSharedModelRoute(
           'The locked model is not on the allowlist.',
         );
       }
-      if (!(await secrets.configured(instance.id))) {
+      if (!(await secrets.configured(instance.credentialRef))) {
         throw new SharedRouteError('credential-missing', 'The locked provider has no key.');
       }
       return { instance, model: lock.model };
@@ -204,7 +222,7 @@ export function createSharedModelRoute(
     for (const row of rows) {
       const instance = JSON.parse(row.body) as StoredInstance;
       if (instance.capability !== capability || instance.models.length === 0) continue;
-      if (await secrets.configured(instance.id)) ready.push({ instance });
+      if (await secrets.configured(instance.credentialRef)) ready.push({ instance });
     }
     const gateways = new Set(ready.map((item) => item.instance.gateway));
     if (ready.length === 0) {
@@ -225,7 +243,7 @@ export function createSharedModelRoute(
     path: string,
     init: { method: string; body?: string },
   ): Promise<{ status: number; json: unknown | undefined; text: string }> => {
-    const key = await secrets.read(instance.id);
+    const key = await secrets.read(instance.credentialRef);
     if (key === undefined || key === '') {
       throw new SharedRouteError('credential-missing', 'The provider has no key.');
     }
@@ -282,12 +300,15 @@ export function createSharedModelRoute(
         protocol: spec.protocol,
         baseUrl: spec.baseUrl.trim(),
         models: [...new Set(spec.models.map((model) => cleanId(model, 'Model')))],
+        credentialRef: cleanId(spec.credentialRef, 'Credential reference'),
         createdAt: now(),
       };
       assertProtocol(stored);
       if (key !== undefined) {
         if (key.trim() === '') throw new SharedRouteError('invalid-input', 'The key is empty.');
-        await secrets.put(stored.id, key);
+        await secrets.put(stored.credentialRef, key);
+      } else if (!(await secrets.configured(stored.credentialRef))) {
+        throw new SharedRouteError('credential-missing', 'That credential reference has no key.');
       }
       database.transaction(
         (db) =>
@@ -362,9 +383,22 @@ export function createSharedModelRoute(
       };
       saveTask(task);
       if (capability === 'video') {
-        const response = await authorizedFetch(instance, '/videos', {
+        const path =
+          instance.protocol === 'apiyi-seedance'
+            ? '/seedance/api/v3/contents/generations/tasks'
+            : '/videos';
+        const body =
+          instance.protocol === 'apiyi-seedance'
+            ? {
+                model,
+                content: [{ type: 'text', text: prompt }],
+                duration: 5,
+                generate_audio: false,
+              }
+            : { model, prompt, seconds: '4' };
+        const response = await authorizedFetch(instance, path, {
           method: 'POST',
-          body: JSON.stringify({ model, prompt, seconds: '4' }),
+          body: JSON.stringify(body),
         });
         const remoteId =
           typeof response.json === 'object' &&
@@ -413,17 +447,21 @@ export function createSharedModelRoute(
       const instance = readInstance(task.providerId);
       if (instance === undefined)
         throw new SharedRouteError('unconfigured', 'The provider is gone.');
-      const response = await authorizedFetch(instance, `/videos/${task.remoteTaskId}`, {
-        method: 'GET',
-      });
+      const path =
+        task.protocol === 'apiyi-seedance'
+          ? `/seedance/api/v3/contents/generations/tasks/${task.remoteTaskId}`
+          : `/videos/${task.remoteTaskId}`;
+      const response = await authorizedFetch(instance, path, { method: 'GET' });
       const status =
         typeof response.json === 'object' && response.json !== null
           ? (response.json as { status?: unknown }).status
           : undefined;
-      if (status === 'completed') {
+      const succeeded =
+        task.protocol === 'apiyi-seedance' ? status === 'succeeded' : status === 'completed';
+      if (succeeded) {
         task.status = 'completed';
         task.artifact = { mediaType: 'video/mp4', body: response.text };
-      } else if (status === 'failed') {
+      } else if (status === 'failed' || status === 'expired') {
         task.status = 'failed';
         task.error = 'provider-failed';
       }

@@ -2,11 +2,15 @@
 
 聊天和概念图都调用 `createSharedModelRoute`。本仓库没有本机 composer 或概念图插件源码，所以这里不新增页面。
 
-API易只接受已经核对过的三种协议，基址是 `https://api.apiyi.com/v1`：
+API易按协议使用不同基址，不能收成一个全局 `/v1`：
 
-- `openai-chat` 只用于 `chat`，路径 `/chat/completions`。文档：<https://docs.apiyi.com/api-capabilities/openai/compatible>
-- `openai-images` 只用于 `image`，路径 `/images/generations`。文档：<https://docs.apiyi.com/en/api-capabilities/gpt-image-2/text-to-image>
-- `openai-videos` 只用于 `video`，提交 `POST /videos`，恢复 `GET /videos/{taskId}`。文档：<https://docs.apiyi.com/api-capabilities/oxygen/video-generation>
+- `openai-chat` 只用于 `chat`，基址 `https://api.apiyi.com/v1`，路径 `/chat/completions`。
+- `openai-images` 只用于 `image`，同一 OpenAI 基址，路径 `/images/generations`。结果没有视频任务号。
+- `anthropic-messages` 只用于 `chat`，基址 `https://api.apiyi.com`，路径 `/v1/messages`。再加上 `/v1` 会被拒绝。
+- `openai-videos` 只用于 `video`，OpenAI 基址，`POST /videos` 与 `GET /videos/{id}`。
+- `apiyi-seedance` 只用于 `video`，基址 `https://api.apiyi.com`，`POST` 与 `GET /seedance/api/v3/contents/generations/tasks`。成功状态是 `succeeded`。公开文档没有取消端点，本地取消不发 DELETE。
+
+存下的密钥不证明令牌分组已开通该型号。多个实例可以引用同一个 `credentialRef`，消费端不再保存一份密钥。
 
 型号必须写进该实例的 allowlist。没有默认启用的型号。Kimi 走 `gateway: official` 和调用方给出的 https 基址，不会因为官网有这个型号就从 API易 发出。
 

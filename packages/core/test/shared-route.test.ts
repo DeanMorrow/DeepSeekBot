@@ -50,19 +50,23 @@ describe('shared model route', () => {
         protocol: 'openai-chat',
         baseUrl: APIYI,
         models: ['gpt-5.4-mini'],
+        credentialRef: 'apiyi-account',
       },
       SECRET,
     );
-    await harness.route.saveInstance({
-      id: 'kimi-official',
-      gateway: 'official',
-      vendor: 'moonshot',
-      capability: 'chat',
-      protocol: 'official-native',
-      baseUrl: 'https://api.moonshot.cn/v1',
-      models: ['moonshot-v1-8k'],
-    });
-    await harness.secrets.put('kimi-official', 'sk-kimi');
+    await harness.route.saveInstance(
+      {
+        id: 'kimi-official',
+        gateway: 'official',
+        vendor: 'moonshot',
+        capability: 'chat',
+        protocol: 'official-native',
+        baseUrl: 'https://api.moonshot.cn/v1',
+        models: ['moonshot-v1-8k'],
+        credentialRef: 'kimi-account',
+      },
+      'sk-kimi',
+    );
     await expect(harness.route.resolve('chat', 'chat', 'auto')).rejects.toMatchObject({
       reason: 'auto-ambiguous',
     });
@@ -93,9 +97,20 @@ describe('shared model route', () => {
         protocol: 'openai-images',
         baseUrl: APIYI,
         models: ['gpt-image-2.5-flare'],
+        credentialRef: 'apiyi-account',
       },
       SECRET,
     );
+    await harness.route.saveInstance({
+      id: 'apiyi-chat',
+      gateway: 'apiyi',
+      vendor: 'openai',
+      capability: 'chat',
+      protocol: 'openai-chat',
+      baseUrl: APIYI,
+      models: ['gpt-5.4-mini'],
+      credentialRef: 'apiyi-account',
+    });
     await expect(
       harness.route.saveInstance({
         id: 'bad-image',
@@ -105,8 +120,21 @@ describe('shared model route', () => {
         protocol: 'openai-chat',
         baseUrl: APIYI,
         models: ['gpt-image-2.5-flare'],
+        credentialRef: 'apiyi-account',
       }),
     ).rejects.toBeInstanceOf(SharedRouteError);
+    await expect(
+      harness.route.saveInstance({
+        id: 'claude-bad-base',
+        gateway: 'apiyi',
+        vendor: 'anthropic',
+        capability: 'chat',
+        protocol: 'anthropic-messages',
+        baseUrl: APIYI,
+        models: ['claude-sonnet-4-6'],
+        credentialRef: 'apiyi-account',
+      }),
+    ).rejects.toMatchObject({ reason: 'protocol-mismatch' });
     harness.route.lock('concept-art', 'image', 'apiyi-image', 'gpt-image-2.5-flare');
     const image = await harness.route.submit(
       'concept-art',
@@ -115,7 +143,11 @@ describe('shared model route', () => {
       'img-1',
       'a lighthouse',
     );
-    expect(image.protocol).toBe('openai-images');
+    expect(image).toMatchObject({
+      protocol: 'openai-images',
+      remoteTaskId: null,
+      status: 'completed',
+    });
     await expect(
       harness.route.submit('chat', 'image', 'project-a', 'img-2', 'a lighthouse'),
     ).rejects.toMatchObject({
@@ -145,6 +177,7 @@ describe('shared model route', () => {
         protocol: 'openai-videos',
         baseUrl: APIYI,
         models: ['oxygen-1.0'],
+        credentialRef: 'apiyi-account',
       },
       SECRET,
     );
@@ -167,6 +200,8 @@ describe('shared model route', () => {
     expect(first.remoteTaskId).toBeNull();
     expect(second.id).toBe(first.id);
     expect(calls).toBe(1);
+    expect(harness.route.cancel('project-a', 'clip-1').status).toBe('cancelled');
+    expect(calls).toBe(1);
     await expect(harness.route.resume('project-b', 'clip-1')).rejects.toMatchObject({
       reason: 'wrong-project',
     });
@@ -175,20 +210,25 @@ describe('shared model route', () => {
   });
 
   it('resumes a known video task id and keeps a failed terminal state', async () => {
+    const seen: string[] = [];
     const harness = open(async (url, init) => {
+      seen.push(`${init?.method} ${String(url)}`);
       if (init?.method === 'POST')
         return new Response(JSON.stringify({ id: 'remote-9' }), { status: 200 });
+      if (init?.method === 'DELETE')
+        return new Response(JSON.stringify({ deleted: true }), { status: 200 });
       return new Response(JSON.stringify({ id: 'remote-9', status: 'failed' }), { status: 200 });
     });
     await harness.route.saveInstance(
       {
         id: 'apiyi-video',
         gateway: 'apiyi',
-        vendor: 'az8',
+        vendor: 'bytedance',
         capability: 'video',
-        protocol: 'openai-videos',
-        baseUrl: APIYI,
-        models: ['oxygen-1.0'],
+        protocol: 'apiyi-seedance',
+        baseUrl: 'https://api.apiyi.com',
+        models: ['doubao-seedance-2-5-260628'],
+        credentialRef: 'apiyi-account',
       },
       SECRET,
     );
@@ -200,10 +240,19 @@ describe('shared model route', () => {
       'a sphere',
     );
     expect(created).toMatchObject({ status: 'running', remoteTaskId: 'remote-9' });
+    expect(seen[0]).toBe('POST https://api.apiyi.com/seedance/api/v3/contents/generations/tasks');
     const failed = await harness.route.resume('project-a', 'clip-2');
     expect(failed.status).toBe('failed');
+    expect(seen[1]).toBe(
+      'GET https://api.apiyi.com/seedance/api/v3/contents/generations/tasks/remote-9',
+    );
+    harness.route.cancel('project-a', 'clip-2');
     const again = await harness.route.resume('project-a', 'clip-2');
     expect(again.status).toBe('failed');
+    expect(seen).toEqual([
+      'POST https://api.apiyi.com/seedance/api/v3/contents/generations/tasks',
+      'GET https://api.apiyi.com/seedance/api/v3/contents/generations/tasks/remote-9',
+    ]);
     expect(JSON.stringify(again)).not.toContain(SECRET);
   });
 });
