@@ -271,9 +271,11 @@ export function migratePack(memoryDir: string, seedDir: string): PackResult {
 }
 
 export interface CatalogOpsRecord {
-  version: number;
-  updatedAt: string;
-  briefs: readonly { id: string; name: string; brief: string }[];
+  status?: 'active' | 'stale' | 'unauthorized' | 'invalid' | 'unreachable';
+  version: number | null;
+  updatedAt: string | null;
+  fingerprint?: string;
+  briefs: readonly { id: string; name: string; brief: string; entryRef?: string | null }[];
 }
 
 export function authorizedCatalogView(
@@ -311,15 +313,17 @@ export function authorizedCatalogView(
     if (item.authority === 'ops') {
       const remote = sourceRef === null ? undefined : ops?.(sourceRef, botSlug);
       if (remote === undefined) {
-        inventories.push({ ...base, status: 'unreachable', briefs: [] });
+        inventories.push({ ...base, status: 'unreachable', briefs: [], entryRef: null });
         continue;
       }
-      const stale = remote.version !== item.version;
       inventories.push({
         ...base,
-        status: stale ? 'stale' : 'active',
+        status: remote.status ?? (remote.version !== item.version ? 'stale' : 'active'),
         version: remote.version,
         updatedAt: remote.updatedAt,
+        entry: null,
+        entryRef: null,
+        fingerprint: remote.fingerprint ?? null,
         briefs: remote.briefs,
       });
       continue;

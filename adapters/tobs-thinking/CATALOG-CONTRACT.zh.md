@@ -29,7 +29,7 @@
 
 ## 两个权威域
 
-Bot Memory 的 `.botharness/catalog/index.json` 只登记这个 Bot 自己的清单。`sourceRef` 以 `bot-memory:` 开头的，文件在这份 Memory 里。`sourceRef` 为 `ops:asset-catalog` 的那一条指向盒上的全局资产目录，条目不复制进来。Host 读不到该源时，状态是 `unreachable`，简介为空，不能拿 Bot 里的技能清单冒充它。
+Bot Memory 的 `.botharness/catalog/index.json` 只登记这个 Bot 自己的清单。`sourceRef` 以 `bot-memory:` 开头的，文件在这份 Memory 里。`sourceRef` 为 `ops:asset-catalog` 的那一条指向盒上的全局资产目录，条目不复制进来。Host 只读一份显式配置，不读调用方传入的路径。配置文件是 `$DSH_HOME/botharness/catalog-source.json`，形状是 `{ "sourceRef": "ops:asset-catalog", "registryPath": "<相对该文件或绝对路径的正式 registry.json>" }`。正式 registry 必须自带 `display.audiences`。只写 `profile-owner` 时，已认证的 Profile Owner 用 `deepseekbot catalog` 能看到全部类别；某个 Bot 要看，必须另有精确的 `bot:<slug>`。没有 `display`、或只有 `owner` / `active` / `id`，状态是 `unauthorized`，条目为空。文件不存在、是符号链接、或路径越出 registry 目录，状态是 `unreachable`。这两种情况都不会改用 Bot 记忆里的技能清单。简介里出现 `/` 或 `\\` 的那一条变成 `invalid`，路径不返回。打开用 `deepseekbot catalog-open <entryRef>`，`entryRef` 形如 `ops:asset-catalog#skills`，不是文件路径。`fingerprint` 随版本和状态变化，再调一次就是重读。
 
 `bot-tools` 只列出 direct 工具。列表里没有 `skill`、直接调用得到 `tool-not-direct`，不能当成模型会话加载失败。模型侧技能目录这次仍是 `untested`。这里不另装 loader。
 

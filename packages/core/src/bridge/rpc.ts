@@ -2240,6 +2240,16 @@ export class BotharnessBridgeService extends TypertRemoteService {
     return unwrap(this.methods.botTools({}));
   }
 
+  catalogView(): { catalog: unknown } {
+    this.requirePrivateOwner('Catalog view requires the authenticated Owner');
+    return unwrap(this.methods.catalogView({}));
+  }
+
+  catalogOpen(entryRef: string): { catalog: unknown } {
+    this.requirePrivateOwner('Catalog view requires the authenticated Owner');
+    return unwrap(this.methods.catalogOpen({ entryRef }));
+  }
+
   botToolRun(
     slug: string,
     tool: string,
@@ -2942,6 +2952,8 @@ markRemoteMethods(BotharnessBridgeService.prototype, [
   'botToolTrace',
   'botTools',
   'botToolRun',
+  'catalogView',
+  'catalogOpen',
   'sessionArchiveSet',
   'memoryMove',
   'sessionOwner',

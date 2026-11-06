@@ -263,3 +263,8 @@ export {
   sealToolInput,
 } from './runtime/super-agent-authority.js';
 export { createToolApprovalRuleStore } from './workspaces/tool-approval-rules.js';
+export {
+  openAuthorizedOpsEntry,
+  readAuthorizedOpsCatalog,
+  OPS_CATALOG_SOURCE,
+} from './memory/catalog-source.js';

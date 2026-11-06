@@ -1,5 +1,6 @@
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools';
 
+import { OPS_CATALOG_SOURCE, readAuthorizedOpsCatalog } from './catalog-source.js';
 import {
   migratePack,
   privateAdd,
@@ -14,6 +15,7 @@ import {
 export interface PackToolHost {
   memoryDir(): string | undefined;
   grant(id: string): PackGrant | undefined;
+  catalogSourcePath?(): string | undefined;
 }
 
 function text(value: unknown): string {
@@ -160,7 +162,34 @@ export function createPackTools(botSlug: string, host: PackToolHost): ToolDefini
         render: (_args, value) => [{ type: 'text', text: value }],
       },
       execute: async (args) =>
-        text(authorizedCatalogView(memory(), botSlug, { actor: args.actor })),
+        text(
+          authorizedCatalogView(memory(), botSlug, { actor: args.actor }, (sourceRef, slug) => {
+            if (sourceRef !== OPS_CATALOG_SOURCE) return undefined;
+            const view = readAuthorizedOpsCatalog(host.catalogSourcePath?.(), {
+              kind: 'bot',
+              slug,
+            });
+            if (view.status === 'unreachable') return undefined;
+            return {
+              status: view.status === 'active' ? 'active' : view.status,
+              version: view.version,
+              updatedAt: view.updatedAt,
+              fingerprint: view.fingerprint,
+              briefs: view.inventories.flatMap((item) =>
+                item.status === 'active' && item.brief !== null
+                  ? [
+                      {
+                        id: item.id,
+                        name: item.id,
+                        brief: item.brief,
+                        entryRef: item.entryRef,
+                      },
+                    ]
+                  : [],
+              ),
+            };
+          }),
+        ),
     }),
     defineTool({
       name: 'pack_rollback',

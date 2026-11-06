@@ -1473,6 +1473,7 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
       return modelReadiness.prepare(slug, role, retainedRoute);
     },
     orchestratorCwd: (bot) => core.registry.memoryDirFor(bot.slug),
+    catalogSourcePath: () => join(dshHome, 'botharness', 'catalog-source.json'),
     workspaceGrants: (slug) => core.grants.list(slug),
     observePreparation: (slug, sessionId, preparing) => {
       if (!preparing && core.states.snapshot(slug).sessions[sessionId] !== 'thinking') return;
@@ -2865,6 +2866,7 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
     log: (event) => ctx.logger.info(JSON.stringify(event)),
   });
   const bridgeMethods = createBridgeMethods({
+    catalogSourcePath: join(dshHome, 'botharness', 'catalog-source.json'),
     voiceProviders: core.voiceProviders,
     voiceLog: (phase, fields) => diagnosticEvents.record('voice', phase, fields),
     prompts: core.prompts,

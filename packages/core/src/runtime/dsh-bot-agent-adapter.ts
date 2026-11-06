@@ -306,6 +306,7 @@ export interface DshBotAgentAdapterOptions {
   defaultAgentPreset?: string;
 
   orchestratorCwd?: (bot: PersonaBotRecord) => string | undefined;
+  catalogSourcePath?: () => string | undefined;
   workspaceGrants?: (
     botSlug: string,
   ) => readonly { id: string; workspacePath: string; revokedAt?: string }[];
@@ -505,6 +506,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
   readonly #promptText: (sessionId: string) => PromptText;
   readonly #hasSession: DshBotAgentAdapterOptions['hasSession'];
   readonly #orchestratorCwd: ((bot: PersonaBotRecord) => string | undefined) | undefined;
+  readonly #catalogSourcePath: (() => string | undefined) | undefined;
   readonly #workspaceGrants: DshBotAgentAdapterOptions['workspaceGrants'];
   readonly #defaultAgentPreset: string | undefined;
   readonly #authorizeBorrow:
@@ -551,6 +553,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
     this.#promptText = options.promptText ?? (() => DEFAULT_PROMPT_TEXT);
     this.#hasSession = options.hasSession;
     this.#orchestratorCwd = options.orchestratorCwd;
+    this.#catalogSourcePath = options.catalogSourcePath;
     this.#workspaceGrants = options.workspaceGrants;
     this.#defaultAgentPreset = options.defaultAgentPreset;
     this.#authorizeBorrow = options.authorizeBorrow;
@@ -1150,6 +1153,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
   ): void {
     for (const tool of createPackTools(run.bot.slug, {
       memoryDir: () => this.#orchestratorCwd?.(run.bot),
+      catalogSourcePath: () => this.#catalogSourcePath?.(),
       grant: (id) => {
         const found = this.#workspaceGrants?.(run.bot.slug)?.find(
           (grant) => grant.id === id && grant.revokedAt === undefined,

@@ -9,6 +9,8 @@
 
 ## 用法
 
+`deepseekbot catalog` 通过已认证 Owner 调用 Host 的 `catalogView`。`deepseekbot catalog-open <entryRef>` 调用 `catalogOpen`。Host 只读 `$DSH_HOME/botharness/catalog-source.json` 指向的正式 registry。谁能看由 registry 里的 `display.audiences` 决定：`profile-owner` 对应这条命令，`bot:<slug>` 只对应那个 Bot 的 `pack_catalog`。没有配置文件是 `unreachable`，没有 `display` 是 `unauthorized`。两种都不会用 Bot 记忆里的清单填上。`entryRef` 是 `ops:asset-catalog#<id>`，响应里没有文件系统路径。
+
 ### 可恢复的 Zip 上传与导入
 
 连接手机使用的同一个已认证 Host，运行 `bot-zip-upload --from-zip <文件> --upload-key <稳定键> --host <地址>`。结果包含 `sha256`、`sizeBytes`、`offset`、`chunkBytes` 和 `expiresAt`。命令通过 `zipUploadBegin` 和 `zipUploadChunk` 上传，使用相同键和文件可继续已确认的分块。每块原始数据为 256 KiB，base64 请求封装后仍小于加密设备通道的 4 MiB 限制。

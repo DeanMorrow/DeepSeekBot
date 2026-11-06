@@ -3,6 +3,7 @@ import type { VoiceProviders } from '../voice/providers.js';
 import { networkBotId, type BotContact } from '../runtime/bot-contact-discovery.js';
 import { BotNetworkDeliveryError } from '../runtime/bot-network.js';
 import { join } from 'node:path';
+import { openAuthorizedOpsEntry, readAuthorizedOpsCatalog } from '../memory/catalog-source.js';
 import { createBotImports, type BotImportsService } from '../bots/imports.js';
 import { SessionRecoveryError } from '../runtime/session-recovery.js';
 import type { BotContextWindow } from '../runtime/context-window.js';
@@ -906,6 +907,8 @@ export interface BridgeMethods {
   botToolRun(
     payload: unknown,
   ): Promise<BridgeResult<{ slug: string; tool: string; sessionId: 'direct'; result: unknown }>>;
+  catalogView(payload: unknown): BridgeResult<{ catalog: unknown }>;
+  catalogOpen(payload: unknown): BridgeResult<{ catalog: unknown }>;
   sessionArchiveSet(payload: unknown): Promise<BridgeResult<{ archived: boolean }>>;
   memoryMove(
     payload: unknown,
@@ -1218,6 +1221,7 @@ export interface BridgeMethodsDeps {
   describeToolCall?(sessionId: string, name: string, args: unknown): PublicToolCall | undefined;
   roster: RosterStore;
   runtime?: BotRuntime;
+  catalogSourcePath?: string;
   attention?: BotAttentionQuery;
   sourcePolicy?: BotSourcePolicyStore;
   schedules?: BotScheduleStore;
@@ -7970,6 +7974,30 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
           },
         };
       }
+    },
+    catalogView() {
+      return {
+        ok: true,
+        value: {
+          catalog: readAuthorizedOpsCatalog(deps.catalogSourcePath, { kind: 'profile-owner' }),
+        },
+      };
+    },
+    catalogOpen(payload) {
+      const source = asObject(payload);
+      const entryRef = source?.['entryRef'];
+      if (typeof entryRef !== 'string' || entryRef.trim() === '')
+        return invalidInput('entryRef is required');
+      return {
+        ok: true,
+        value: {
+          catalog: openAuthorizedOpsEntry(
+            deps.catalogSourcePath,
+            { kind: 'profile-owner' },
+            entryRef.trim(),
+          ),
+        },
+      };
     },
     sessions(payload) {
       const slug = asSlug(payload);

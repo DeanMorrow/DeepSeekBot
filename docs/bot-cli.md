@@ -618,6 +618,10 @@ deepseekbot bot-trace <bot-id> --turns 1
 
 Each turn lists the tools the model called with bounded arguments, the outcome (`ok`, `error`, `denied` when an approval was rejected, `cancelled`, or `pending`), the approval decision when there was one, and the first part of the result. Arguments and results of `secret_cli`, `secret_http`, `protected_cli`, `secret_mcp_connect` and `ask_secret` are never returned. A `denied` call points at the Harness (access or approval); a missing or wrongly argued call points at the model; an `error` from the same tool that also fails in path B points at the Browser or Computer. `--session` reads another of the Bot's Sessions, such as an Assignment.
 
+### Ops catalog
+
+`deepseekbot catalog` calls the live Host method `catalogView` as the authenticated Owner. `deepseekbot catalog-open <entryRef>` calls `catalogOpen`. The Host reads only `$DSH_HOME/botharness/catalog-source.json`. That file points at the official registry. The registry's `display.audiences` decides who may see it. `profile-owner` is this command. `bot:<slug>` is that Bot's `pack_catalog` only. A missing file is `unreachable`. A registry without `display` is `unauthorized`. Neither result is filled from a Bot memory catalog. `entryRef` is `ops:asset-catalog#<id>`. The reply omits filesystem paths.
+
 ### Harness Bot tools without the model
 
 The Harness tools a Bot uses to talk, read its Inbox and run its Channels and schedules can be called the same way, as that Bot, with no model involved:

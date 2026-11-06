@@ -37,6 +37,7 @@ import type { BotCreateCliIo } from './bot-create-cli.js';
 import { CliLiveError } from './cli-live-error.js';
 import { CONNECTION_COMMANDS, runConnectionCommand } from './cli-connection.js';
 import { BOT_TOOL_COMMANDS, runBotToolCommand } from './cli-bot-tool.js';
+import { CATALOG_COMMANDS, runCatalogCommand } from './cli-catalog.js';
 import {
   TAKEOVER_COMMANDS,
   TAKEOVER_OPTIONS,
@@ -329,6 +330,7 @@ export const LIVE_COMMANDS = [
   ...BROWSER_COMPUTER_COMMANDS,
   ...PROFILE_COMMANDS,
   ...BOT_TOOL_COMMANDS,
+  ...CATALOG_COMMANDS,
   ...TAKEOVER_COMMANDS,
   ...TODO_COMMANDS,
   ...APPROVAL_TEMPLATE_COMMANDS,
@@ -1121,6 +1123,10 @@ export async function runLiveCli(
     );
   if (isTakeoverCommand(command))
     return runTakeoverCommand(command, rest, values, () =>
+      connectLiveHost(values, io, AbortSignal.timeout(timeoutMs(values.timeout))),
+    );
+  if (CATALOG_COMMANDS.some((entry) => entry.command === command))
+    return runCatalogCommand(command as (typeof CATALOG_COMMANDS)[number]['command'], rest, () =>
       connectLiveHost(values, io, AbortSignal.timeout(timeoutMs(values.timeout))),
     );
   if (BOT_TOOL_COMMANDS.some((entry) => entry.command === command))
