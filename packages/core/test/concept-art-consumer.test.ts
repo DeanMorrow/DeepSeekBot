@@ -101,8 +101,10 @@ describe('concept art consumer', () => {
     expect(opened.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.idempotencyKey).toBe(none.input.route_idempotency_key);
-    expect(consumer.accept(opened.task!, String(none.input.input_fingerprint))).toMatchObject({
-      accept: true,
+    expect(consumer.accept(opened.task!, 1)).toMatchObject({
+      accept: false,
+      deliverable: false,
+      parsed: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
       mediaVerified: false,
     });
@@ -112,7 +114,7 @@ describe('concept art consumer', () => {
       route: env.route,
       limits: null,
     });
-    expect(unconfigured.accept(opened.task!, String(none.input.input_fingerprint))).toMatchObject({
+    expect(unconfigured.accept(opened.task!, 1)).toMatchObject({
       accept: false,
       reason: 'LIMITS_UNCONFIGURED',
       mediaVerified: false,
@@ -208,6 +210,37 @@ describe('concept art consumer', () => {
       expect(blockedByReason).toMatchObject({ status: 'BLOCKED', submitCalls: 0 });
       expect(blockedByReason.reasons).toEqual(item.expected.reasons);
     }
+    const ready = await consumer.request({
+      raw_requirement: '保持参考图',
+      submit_prompt: 'keep the reference',
+      style: { state: 'none' },
+      references: [{ id: 'R9', status: 'ready' }],
+      sessionId: 'fixture-ctx-1',
+      context_version: 1,
+      operation_id: 'op-ready',
+      route_idempotency_key: 'op-ready',
+      input_fingerprint: 'fp-ready',
+      submit_allowed: true,
+    });
+    expect(ready).toMatchObject({
+      status: 'BLOCKED',
+      reasons: ['REFERENCE_REQUIRED_BUT_ROUTE_PROMPT_ONLY'],
+      submitCalls: 0,
+    });
+    const unknownRef = await consumer.request({
+      raw_requirement: '保持参考图',
+      submit_prompt: 'keep the reference',
+      style: { state: 'none' },
+      references: [{ id: 'R10', status: 'sideways' }],
+      sessionId: 'fixture-ctx-1',
+      context_version: 1,
+      operation_id: 'op-unknown-ref',
+      route_idempotency_key: 'op-unknown-ref',
+      input_fingerprint: 'fp-unknown-ref',
+      submit_allowed: true,
+    });
+    expect(unknownRef).toMatchObject({ status: 'BLOCKED', submitCalls: 0 });
+    expect(unknownRef.reasons).toContain('REFERENCE_STATUS_UNKNOWN_sideways');
     const shield = await consumer.request({
       raw_requirement: '透明护罩加不透明底座，正面，不要多视图。',
       submit_prompt: 'A clear shield over an opaque base, front view, no multi-view.',
@@ -221,6 +254,51 @@ describe('concept art consumer', () => {
     });
     expect(shield.reasons).not.toContain('CONFLICT_transparent_vs_opaque');
     expect(shield).toMatchObject({ status: 'ALLOWED', submitCalls: 1 });
+    const separated = await consumer.request({
+      raw_requirement: '完全透明的护罩，配不透光的底座',
+      submit_prompt: 'A fully transparent shield with an opaque base.',
+      style: { state: 'none' },
+      sessionId: 'fixture-ctx-1',
+      context_version: 1,
+      operation_id: 'op-shield-2',
+      route_idempotency_key: 'op-shield-2',
+      input_fingerprint: 'fp-shield-2',
+      submit_allowed: true,
+    });
+    expect(separated).toMatchObject({ status: 'ALLOWED', submitCalls: 1 });
+    expect(separated.reasons).not.toContain('CONFLICT_transparent_vs_opaque');
+    const separatedTight = await consumer.request({
+      raw_requirement: '完全透明的护罩配不透光底座',
+      submit_prompt: 'A transparent shield fitted to an opaque base.',
+      style: { state: 'none' },
+      sessionId: 'fixture-ctx-1',
+      context_version: 1,
+      operation_id: 'op-shield-3',
+      route_idempotency_key: 'op-shield-3',
+      input_fingerprint: 'fp-shield-3',
+      submit_allowed: true,
+    });
+    expect(separatedTight).toMatchObject({
+      status: 'ALLOWED',
+      submitCalls: 1,
+      optimization: 'not-performed',
+    });
+    const unclear = await consumer.request({
+      raw_requirement: '既要完全透明，也要不透光',
+      submit_prompt: 'both',
+      style: { state: 'none' },
+      sessionId: 'fixture-ctx-1',
+      context_version: 1,
+      operation_id: 'op-unclear-1',
+      route_idempotency_key: 'op-unclear-1',
+      input_fingerprint: 'fp-unclear',
+      submit_allowed: true,
+    });
+    expect(unclear).toMatchObject({
+      status: 'NEEDS_CLARIFICATION',
+      reasons: ['CONFLICT_NEEDS_CLARIFICATION'],
+      submitCalls: 0,
+    });
 
     driven.add('F_MISSING_HOST_CONTEXT');
     const missing = await consumer.request({
@@ -249,7 +327,7 @@ describe('concept art consumer', () => {
       submit_allowed: true,
     } as never);
     expect(again.idempotencyKey).toBe('op-t1-1');
-    expect(env.posts()).toBe(6);
+    expect(env.posts()).toBe(8);
 
     const fresh = caseById('F_EXPLICIT_NEW_GENERATION');
     driven.add(fresh.id);
@@ -262,7 +340,7 @@ describe('concept art consumer', () => {
         } as never)
       ).idempotencyKey,
     ).toBe('op-t1-2');
-    expect(env.posts()).toBe(7);
+    expect(env.posts()).toBe(9);
 
     const idem = caseById('F_IDEM_DIFF_PAYLOAD_REJECT');
     driven.add(idem.id);
@@ -272,9 +350,9 @@ describe('concept art consumer', () => {
       style: { state: 'none' },
       sessionId: 'fixture-ctx-1',
       context_version: Number(idem.input.context_version),
-      operation_id: String(idem.input.operation_id),
+      operation_id: 'op-t1-renamed',
       route_idempotency_key: String(idem.input.route_idempotency_key),
-      input_fingerprint: String(idem.input.new_fingerprint),
+      input_fingerprint: String(none.input.input_fingerprint),
       submit_allowed: true,
     });
     expect(mismatch).toMatchObject({
@@ -314,12 +392,12 @@ describe('concept art consumer', () => {
     const stopped = consumer.cancel('fixture-ctx-1', 'op-t1-1');
     expect(stopped.localStop).toBe(true);
     const late = await consumer.resume('fixture-ctx-1', 'op-t1-1');
-    expect(consumer.accept(late, 'fp-t1-v1')).toMatchObject({
+    expect(consumer.accept(late, 1)).toMatchObject({
       accept: false,
       reason: 'LOCAL_STOP',
     });
     expect(cancelLate.expected.accept_as_image).toBe(false);
-    expect(env.posts()).toBe(7);
+    expect(env.posts()).toBe(9);
 
     const badB64 = caseById('F_BAD_BASE64');
     const jsonB64 = caseById('F_JSON_AS_B64');
@@ -389,7 +467,7 @@ describe('concept art consumer', () => {
         )
       ).error,
     ).toBe('empty-artifact');
-    expect(consumer.accept(bad, 'fp-t1-v1').accept).toBe(false);
+    expect(consumer.accept(bad, 1).accept).toBe(false);
     const boundMedia = {
       projectId: 'session:fixture-ctx-1',
       idempotencyKey: 'op-t1-1',
@@ -408,7 +486,7 @@ describe('concept art consumer', () => {
             value: String(badB64.input.provider_b64_json),
           },
         },
-        'fp-t1-v1',
+        1,
       ).reason,
     ).toBe(badB64.expected.fail_stage);
     expect(
@@ -421,7 +499,7 @@ describe('concept art consumer', () => {
             value: String(jsonB64.input.value_b64),
           },
         },
-        'fp-t1-v1',
+        1,
       ).reason,
     ).toBe(jsonB64.expected.reason);
     expect(
@@ -434,7 +512,7 @@ describe('concept art consumer', () => {
             value: String(truncated.input.value_b64),
           },
         },
-        'fp-t1-v1',
+        1,
       ).reason,
     ).toBe(truncated.expected.reason);
     expect(
@@ -447,13 +525,13 @@ describe('concept art consumer', () => {
             url: 'https://untrusted.example/x',
           },
         },
-        'fp-t1-v1',
+        1,
       ).reason,
     ).toBe('UNTRUSTED_URL');
     expect(
       consumer.accept(
         { ...boundMedia, status: 'failed', error: 'empty-artifact', artifact: null },
-        'fp-t1-v1',
+        1,
       ).accept,
     ).toBe(false);
     expect(
@@ -468,16 +546,29 @@ describe('concept art consumer', () => {
             url: 'https://untrusted.example/x',
           },
         },
-        'fp-t1-v1',
+        1,
       ),
     ).toMatchObject({
       accept: false,
       reason: 'UNTRUSTED_URL',
       staleProviderError: residual.input.error,
     });
-    expect(consumer.accept(opened.task!, 'not-the-stored-snapshot').reason).toBe(
-      'FINGERPRINT_MISMATCH',
-    );
+    expect(consumer.accept(opened.task!, 99).reason).toBe('CONTEXT_VERSION_MISMATCH');
+    const huge = Buffer.alloc(24);
+    huge.write('\x89PNG\r\n\x1a\n', 0, 'latin1');
+    huge.writeUInt32BE(13, 8);
+    huge.write('IHDR', 12, 'latin1');
+    huge.writeUInt32BE(100_000, 16);
+    huge.writeUInt32BE(100_000, 20);
+    expect(
+      consumer.accept(
+        {
+          ...boundMedia,
+          artifact: { kind: 'base64', mediaVerified: false, value: huge.toString('base64') },
+        },
+        1,
+      ),
+    ).toMatchObject({ accept: false, deliverable: false, reason: 'PIXEL_LIMIT' });
     expect(driven).toEqual(new Set(FIXTURES.cases.map((item) => item.id)));
   });
 });

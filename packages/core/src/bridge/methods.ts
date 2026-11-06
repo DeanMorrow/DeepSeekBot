@@ -1,4 +1,5 @@
 import { createVoiceBridgeMethods, type VoiceBridgeMethods } from '../voice/bridge.js';
+import { createConceptArtBridge } from '../models/concept-art-bridge.js';
 import type { VoiceProviders } from '../voice/providers.js';
 import { networkBotId, type BotContact } from '../runtime/bot-contact-discovery.js';
 import { BotNetworkDeliveryError } from '../runtime/bot-network.js';
@@ -1012,6 +1013,7 @@ export interface BridgeMethods {
   voiceDefaultSet: VoiceBridgeMethods['voiceDefaultSet'];
   voiceSpeechThresholdSet: VoiceBridgeMethods['voiceSpeechThresholdSet'];
   voiceDictation: VoiceBridgeMethods['voiceDictation'];
+  conceptArt(payload: unknown): Promise<BridgeResult<unknown>>;
   approvalReviewerModel(payload?: unknown): Promise<BridgeResult<ApprovalReviewerModelView>>;
   approvalReviewerModelSet(payload: unknown): Promise<BridgeResult<ApprovalReviewerModelView>>;
   idleCompaction(payload?: unknown): BridgeResult<IdleCompactionView>;
@@ -1175,6 +1177,8 @@ function storageFailure(
 
 export interface BridgeMethodsDeps {
   voiceProviders?: VoiceProviders;
+  conceptArt?: Parameters<typeof createConceptArtBridge>[0]['conceptArt'];
+  sharedRoute?: Parameters<typeof createConceptArtBridge>[0]['sharedRoute'];
   voiceLog?: (phase: string, fields: Record<string, string | number>) => void;
   botContext?(slug: string): Promise<BotContextWindow>;
   botSystemPrompt?(slug: string): Promise<BotSystemPromptView>;
@@ -2291,6 +2295,12 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
       registry: deps.registry,
       log: deps.voiceLog,
     }),
+    conceptArt(payload: unknown): Promise<BridgeResult<unknown>> {
+      return createConceptArtBridge({
+        ...(deps.conceptArt === undefined ? {} : { conceptArt: deps.conceptArt }),
+        ...(deps.sharedRoute === undefined ? {} : { sharedRoute: deps.sharedRoute }),
+      }).conceptArt(payload) as Promise<BridgeResult<unknown>>;
+    },
     channelBridges(payload) {
       const input = z
         .object({ channelId: z.string().min(1).max(128) })

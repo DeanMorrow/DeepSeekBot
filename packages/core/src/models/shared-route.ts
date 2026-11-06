@@ -480,6 +480,42 @@ export function createSharedModelRoute(
         listed.push(await publicInstance(JSON.parse(row.body) as StoredInstance));
       return listed;
     },
+    async describeConsumer(consumer: RouteConsumer, capability: ModelCapability) {
+      const lock = database.read((db) => {
+        return db
+          .prepare(
+            'SELECT provider_id, model FROM shared_model_locks WHERE consumer = ? AND capability = ?',
+          )
+          .get(consumer, capability) as { provider_id: string; model: string } | undefined;
+      });
+      if (lock === undefined) {
+        return {
+          locked: false as const,
+          providerId: null,
+          model: null,
+          credentialConfigured: false,
+          groupCoverage: 'unverified' as const,
+          catalog: 'not-the-image-route' as const,
+        };
+      }
+      const instance = readInstance(lock.provider_id);
+      return {
+        locked: true as const,
+        providerId: lock.provider_id,
+        model: lock.model,
+        credentialConfigured:
+          instance !== undefined && (await secrets.configured(instance.credentialRef)),
+        groupCoverage: 'unverified' as const,
+        catalog: 'not-the-image-route' as const,
+      };
+    },
+    read(projectId: string, idempotencyKey: string): StoredTask {
+      const task = readTask(projectId, idempotencyKey);
+      if (task === undefined) {
+        throw new SharedRouteError('wrong-project', 'No task belongs to this project.');
+      }
+      return task;
+    },
     lock(consumer: RouteConsumer, capability: ModelCapability, providerId: string, model: string) {
       const instance = readInstance(providerId);
       if (

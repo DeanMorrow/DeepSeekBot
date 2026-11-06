@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
+
 import type { OperationalDatabaseModulePort } from '../database/owner.js';
-import { inspectImage, type ImageMime } from '../media/image-format.js';
+import { inspectImage, ImageFormatError, type ImageMime } from '../media/image-format.js';
 import type { SessionOwnership } from '../sessions/ownership.js';
 import type { StoredArtifact } from './shared-route.js';
 
@@ -29,9 +31,11 @@ export interface ConceptArtRequest {
 }
 
 export interface ConceptArtVerdict {
-  status: 'ALLOWED' | 'BLOCKED' | 'INTEGRATION_BLOCKED';
+  status: 'ALLOWED' | 'BLOCKED' | 'INTEGRATION_BLOCKED' | 'NEEDS_CLARIFICATION';
   reasons: string[];
   submitCalls: number;
+  /** The consumer does not extract or optimize style. */
+  optimization: 'not-performed';
   projectId?: string;
   idempotencyKey?: string;
   prompt?: string;
@@ -76,6 +80,52 @@ export function sessionProjectId(
   return { projectId: `session:${record.sessionId}` };
 }
 
+/** Same-object contradiction, two different heads, or not enough structure to decide. */
+export function transparencyMaterial(raw: string): 'conflict' | 'separate' | 'unclear' | 'none' {
+  const transparent = raw.includes('完全透明');
+  const opaque = raw.includes('不透光');
+  if (!transparent || !opaque) return 'none';
+  if (/完全透明但不透光的\S{1,32}/u.test(raw)) return 'conflict';
+  const paired = raw.match(/完全透明的(\S{1,32}?)[，,]?配不透光的?(\S{1,32})/u);
+  if (paired !== null) return paired[1] === paired[2] ? 'conflict' : 'separate';
+  const head = (marker: string) =>
+    [...raw.matchAll(new RegExp(`${marker}的([^，。；、配和与\\s]{1,32})`, 'gu'))].map(
+      (match) => match[1] ?? '',
+    );
+  const clearHeads = head('完全透明');
+  const opaqueHeads = head('不透光');
+  if (clearHeads.length === 1 && opaqueHeads.length === 1) {
+    return clearHeads[0] === opaqueHeads[0] ? 'conflict' : 'separate';
+  }
+  return 'unclear';
+}
+
+function canonicalFingerprint(request: ConceptArtRequest): string {
+  const snapshot = {
+    raw_requirement: request.raw_requirement,
+    submit_prompt: request.submit_prompt ?? '',
+    style: {
+      state: request.style.state,
+      styleRef: request.style.styleRef ?? null,
+      version: request.style.version ?? null,
+    },
+    references: [...(request.references ?? [])]
+      .map((item) => ({ id: item.id, status: item.status }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    operation_id: request.operation_id,
+  };
+  return createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+}
+
+function pngPixelCount(prefix: Buffer): number | undefined {
+  if (prefix.length < 24) return undefined;
+  if (prefix.subarray(0, 8).toString('latin1') !== '\x89PNG\r\n\x1a\n') return undefined;
+  const view = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
+  if (view.getUint32(8) !== 13) return undefined;
+  if (prefix.subarray(12, 16).toString('latin1') !== 'IHDR') return undefined;
+  return view.getUint32(16) * view.getUint32(20);
+}
+
 function forbiddenLibraryText(request: ConceptArtRequest): string[] {
   return (request.style_history_audit_only ?? [])
     .map((item) => item.def?.trim() ?? '')
@@ -110,43 +160,57 @@ export function createConceptArtConsumer(input: {
         | undefined;
     });
 
+  const refused = (
+    status: ConceptArtVerdict['status'],
+    reasons: string[],
+    submitCalls: number,
+  ): ConceptArtVerdict => ({ status, reasons, submitCalls, optimization: 'not-performed' });
+
   return {
     submitCount: () => submitCalls,
+    limitsConfigured: () => input.limits !== null,
     projectIdFor: (sessionId: string | null) => sessionProjectId(input.ownership, sessionId),
     async request(request: ConceptArtRequest): Promise<ConceptArtVerdict> {
       const before = submitCalls;
       const reasons: string[] = [];
+      const material = transparencyMaterial(request.raw_requirement);
       if (request.raw_requirement.trim() === '') reasons.push('MISSING_RAW_REQUIREMENT');
-      if (
-        request.raw_requirement.includes('完全透明') &&
-        request.raw_requirement.includes('不透光')
-      ) {
-        reasons.push('CONFLICT_transparent_vs_opaque');
-      }
+      if (material === 'conflict') reasons.push('CONFLICT_transparent_vs_opaque');
+      if (material === 'unclear') reasons.push('CONFLICT_NEEDS_CLARIFICATION');
       for (const reference of request.references ?? []) {
         if (reference.status === 'missing') reasons.push(`MISSING_REFERENCE_${reference.id}`);
-        if (reference.status === 'present_local')
+        else if (reference.status === 'present_local' || reference.status === 'ready')
           reasons.push('REFERENCE_REQUIRED_BUT_ROUTE_PROMPT_ONLY');
+        else reasons.push(`REFERENCE_STATUS_UNKNOWN_${reference.status}`);
       }
       const prompt = request.submit_prompt ?? '';
       for (const def of forbiddenLibraryText(request)) {
         if (prompt.includes(def)) reasons.push('CLEARED_STYLE_IN_PROMPT');
       }
+      if (
+        request.submit_allowed &&
+        reasons.length === 1 &&
+        reasons[0] === 'CONFLICT_NEEDS_CLARIFICATION'
+      ) {
+        return refused('NEEDS_CLARIFICATION', reasons, 0);
+      }
       if (reasons.length > 0 || request.submit_allowed === false) {
-        return { status: 'BLOCKED', reasons, submitCalls: submitCalls - before };
+        return refused('BLOCKED', reasons, submitCalls - before);
       }
       const bound = sessionProjectId(input.ownership, request.sessionId);
-      if ('status' in bound) return { ...bound, submitCalls: 0 };
+      if ('status' in bound) return { ...bound, submitCalls: 0, optimization: 'not-performed' };
+      const fingerprint = canonicalFingerprint(request);
       const existing = readOp(bound.projectId, request.route_idempotency_key);
-      if (existing !== undefined && existing.fingerprint !== request.input_fingerprint) {
-        return {
-          status: 'BLOCKED',
-          reasons: ['IDEMPOTENCY_KEY_PAYLOAD_MISMATCH'],
-          submitCalls: 0,
-        };
-      }
       if (existing !== undefined && existing.context_version !== String(request.context_version)) {
-        return { status: 'BLOCKED', reasons: ['CONTEXT_VERSION_MISMATCH'], submitCalls: 0 };
+        return refused('BLOCKED', ['CONTEXT_VERSION_MISMATCH'], 0);
+      }
+      if (
+        existing !== undefined &&
+        (existing.fingerprint !== fingerprint ||
+          existing.prompt !== prompt ||
+          existing.operation_id !== request.operation_id)
+      ) {
+        return refused('BLOCKED', ['IDEMPOTENCY_KEY_PAYLOAD_MISMATCH'], 0);
       }
       if (existing === undefined) {
         input.database.transaction(
@@ -162,7 +226,7 @@ export function createConceptArtConsumer(input: {
                 request.route_idempotency_key,
                 request.operation_id,
                 String(request.context_version),
-                request.input_fingerprint,
+                fingerprint,
                 prompt,
               ),
           ['concept-art'],
@@ -173,15 +237,16 @@ export function createConceptArtConsumer(input: {
         'image',
         bound.projectId,
         request.route_idempotency_key,
-        prompt,
+        existing?.prompt ?? prompt,
       );
       return {
         status: 'ALLOWED',
         reasons: [],
         submitCalls: submitCalls - before,
+        optimization: 'not-performed',
         projectId: bound.projectId,
         idempotencyKey: request.route_idempotency_key,
-        prompt,
+        prompt: existing?.prompt ?? prompt,
         task,
       };
     },
@@ -195,16 +260,19 @@ export function createConceptArtConsumer(input: {
       if ('status' in bound) throw Object.assign(new Error(bound.status), bound);
       return wrapped.cancel(bound.projectId, idempotencyKey);
     },
-    accept(task: RouteTask, fingerprint: string) {
+    accept(task: RouteTask, contextVersion: string | number) {
       const limits = input.limits;
       const verdict = {
-        accept: false,
+        accept: false as const,
+        deliverable: false as const,
+        parsed: false,
         staleProviderError: task.error,
         mediaVerified: false as const,
       };
       const bound = readOp(task.projectId, task.idempotencyKey);
-      if (bound === undefined || bound.fingerprint !== fingerprint) {
-        return { ...verdict, reason: 'FINGERPRINT_MISMATCH' };
+      if (bound === undefined) return { ...verdict, reason: 'FINGERPRINT_MISMATCH' };
+      if (String(contextVersion) !== bound.context_version) {
+        return { ...verdict, reason: 'CONTEXT_VERSION_MISMATCH' };
       }
       if (task.localStop === true) return { ...verdict, reason: 'LOCAL_STOP' };
       if (limits === null) return { ...verdict, reason: 'LIMITS_UNCONFIGURED' };
@@ -218,6 +286,13 @@ export function createConceptArtConsumer(input: {
         return { ...verdict, reason: 'ENCODED_LIMIT' };
       const estimated = Math.floor((task.artifact.value.length * 3) / 4);
       if (estimated > limits.maxDecodedBytes) return { ...verdict, reason: 'DECODED_LIMIT' };
+      const prefixChars = Math.min(task.artifact.value.length, 48);
+      const aligned = prefixChars - (prefixChars % 4);
+      if (aligned >= 32) {
+        const pixels = pngPixelCount(Buffer.from(task.artifact.value.slice(0, aligned), 'base64'));
+        if (pixels !== undefined && pixels > limits.maxPixels)
+          return { ...verdict, reason: 'PIXEL_LIMIT' };
+      }
       if (task.artifact.mediaVerified !== false)
         return { ...verdict, reason: 'ROUTE_VERIFIED_CLAIM' };
       let bytes: Buffer;
@@ -238,14 +313,16 @@ export function createConceptArtConsumer(input: {
           return { ...verdict, reason: 'FORMAT_NOT_ALLOWED' };
         if (inspected.width * inspected.height > limits.maxPixels)
           return { ...verdict, reason: 'PIXEL_LIMIT' };
-      } catch {
+      } catch (error) {
+        if (error instanceof ImageFormatError && error.status === 'too-large') {
+          return { ...verdict, reason: 'PIXEL_LIMIT' };
+        }
         return { ...verdict, reason: 'truncated_or_incomplete_image_bytes' };
       }
       return {
         ...verdict,
-        accept: true,
+        parsed: true,
         reason: 'BYTES_PARSED_NOT_A_RENDER',
-        fingerprint,
       };
     },
   };

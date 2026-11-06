@@ -8,14 +8,18 @@ import { SharedRouteError, type SecretStore } from './shared-route.js';
 
 type Credentials = Pick<CredentialProvider, 'readRecord' | 'modifyRecord'>;
 
-const SCOPE = 'botharness-core';
+const ROUTE_SCOPE = 'botharness-route';
 
 function recordKey(id: string) {
-  if (!isCredentialKeySegment(SCOPE) || !isCredentialKeySegment(id)) return undefined;
-  return credentialKey(SCOPE, id);
+  if (!isCredentialKeySegment(ROUTE_SCOPE) || !isCredentialKeySegment(id)) return undefined;
+  return credentialKey(ROUTE_SCOPE, id);
 }
 
-/** Read and write route keys through the Host credential service. This is not a second store. */
+/**
+ * Route keys use the existing credential service under `botharness-route`.
+ * That scope is not `botharness-core`, so a voice or cloud grant with the same id stays put.
+ * A reference cleanId accepts but credentialKey rejects is not stored.
+ */
 export function createCredentialSecretStore(
   credentials: () => Credentials | undefined,
 ): SecretStore {
@@ -23,13 +27,32 @@ export function createCredentialSecretStore(
     async put(id, key) {
       const native = credentials();
       const stored = recordKey(id);
-      if (native === undefined || stored === undefined || key === '') {
+      if (native === undefined || key === '') {
         throw new SharedRouteError(
           'credential-unavailable',
           'The Host credential service cannot store this reference.',
         );
       }
-      await native.modifyRecord(stored, async () => ({ kind: 'api-key', key }));
+      if (stored === undefined) {
+        throw new SharedRouteError(
+          'credential-ref-not-storable',
+          'This reference is not a credential key segment. Dots, underscores and a leading digit are not stored.',
+        );
+      }
+      let blocked = false;
+      await native.modifyRecord(stored, async (current) => {
+        if (current !== undefined && current.kind !== 'api-key') {
+          blocked = true;
+          return undefined;
+        }
+        return { kind: 'api-key', key };
+      });
+      if (blocked) {
+        throw new SharedRouteError(
+          'credential-record-conflict',
+          'An unrelated credential record already uses this route reference.',
+        );
+      }
     },
     async configured(id) {
       return (await this.read(id)) !== undefined;

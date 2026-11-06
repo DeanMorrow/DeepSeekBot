@@ -2893,6 +2893,8 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
     catalogSourcePath: join(dshHome, 'botharness', 'catalog-source.json'),
     catalogSession,
     voiceProviders: core.voiceProviders,
+    conceptArt: core.conceptArt,
+    sharedRoute: core.sharedRoute,
     voiceLog: (phase, fields) => diagnosticEvents.record('voice', phase, fields),
     prompts: core.prompts,
     botContext: async (slug) => {

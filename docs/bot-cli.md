@@ -833,6 +833,18 @@ deepseekbot approval-reviewer-model-set bot
 
 Both commands return `{follows, model}`: `follows` is `bot` (each Bot's own model, `model` is `null`), `model` (the named model is used for every review) or `invalid` (the setting file cannot be read). For a named model they also return `available` and, when it is `false`, `unavailableReason`. A model that is not in the catalog, or whose provider has no working key, is still saved, but every review then posts the ordinary Human card and writes `fallback=model-unavailable` with the reason to `logs.db`; the reviewer never switches to another model on its own. Each review's `approval-review` line in `logs.db` names the `model` and the `reviewSession` it used. When a Bot runs `approval-reviewer-model-set` from its own Shell, the call requires a Human decision or an explicit management-scope saved rule; the model Approval Reviewer cannot answer it. Refusals carry a code: `usage` (no `<provider>/<model>`, or `--effort` with `bot`) and `invalid-input`.
 
+### Concept art
+
+`deepseekbot concept-art` calls the Host bridge method `conceptArt`. It does not accept an API key. `status` reports the manual image lock, whether that lock's credential reference is configured, and that the chat model catalog is not this image route. `request` reads one JSON object from stdin. `resume` and `cancel` take a session id and the original operation key. `accept <session> <key> <context-version>` reads the stored task and does not treat a parsed image as a deliverable: media limits are unconfigured, `mediaVerified` stays false, and `deliverable` stays false. A reference the route cannot carry is blocked. Refusals include `usage` and `invalid-input`.
+
+```bash
+deepseekbot concept-art status
+deepseekbot concept-art request
+deepseekbot concept-art resume <session> <key>
+deepseekbot concept-art cancel <session> <key>
+deepseekbot concept-art accept <session> <key> <context-version>
+```
+
 ### Idle Compaction
 
 When a Bot's Orchestrator Session has no running turn and no pending Bot Inbox Admission, the Host compacts it through DSH (the `/compact` path) at half its model route's prompt-cache lifetime, never before 15 minutes, so the long history is condensed while the provider can still read it at the cache-hit price. Only Sessions above half of DSH's default automatic compaction threshold for that route are compacted; Assignment and Approval Review Sessions never are. Nothing appears in the chat. The setting is Profile-wide and on by default.

@@ -162,6 +162,11 @@ import {
   runIdleCompactionCommand,
 } from './cli-idle-compaction.js';
 import {
+  CONCEPT_ART_COMMANDS,
+  isConceptArtCommand,
+  runConceptArtCommand,
+} from './cli-concept-art.js';
+import {
   CONNECT_COMMANDS,
   CONNECT_OPTIONS,
   isConnectCommand,
@@ -339,6 +344,7 @@ export const LIVE_COMMANDS = [
   ...VOICE_COMMANDS,
   ...CALL_COMMANDS,
   ...IDLE_COMPACTION_COMMANDS,
+  ...CONCEPT_ART_COMMANDS,
   ...STORAGE_COMMANDS,
   {
     command: 'send',
@@ -1107,6 +1113,16 @@ export async function runLiveCli(
       const signal = AbortSignal.timeout(timeoutMs(values.timeout));
       return (await connectLiveHost(values, io, signal)).rpc;
     });
+  if (isConceptArtCommand(command))
+    return runConceptArtCommand(
+      command,
+      rest,
+      async () => {
+        const signal = AbortSignal.timeout(timeoutMs(values.timeout));
+        return (await connectLiveHost(values, io, signal)).rpc;
+      },
+      io.readStdin ?? (async () => ''),
+    );
   if (isPromptPresetCommand(command))
     return runPromptPresetCommand(command, rest, values, io, async () => {
       const signal = AbortSignal.timeout(timeoutMs(values.timeout));

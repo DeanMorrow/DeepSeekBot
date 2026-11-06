@@ -802,6 +802,18 @@ deepseekbot approval-reviewer-model-set bot
 
 两个命令都返回 `{follows, model}`：`follows` 为 `bot`（跟随每个 Bot 自己的模型，`model` 为 `null`）、`model`（所有审批都用指定模型）或 `invalid`（设置文件读不出来）。指定模型时还会返回 `available`，为 `false` 时附带 `unavailableReason`。不在模型目录里、或服务商没有可用密钥的模型仍会保存，但之后每次审批都会改发普通的人类审批卡片，并在 `logs.db` 里写入 `fallback=model-unavailable` 和原因；审批员绝不会自己换用别的模型。`logs.db` 里每条 `approval-review` 记录都写明这次用的 `model` 和 `reviewSession`。Bot 在自己的 Shell 里运行 `approval-reviewer-model-set` 时，这次调用需要人类决定，或在独立管理范围中显式保存的授权规则；模型审批员不能代答。拒绝时带错误码：`usage`（没有 `<provider>/<model>`，或对 `bot` 加了 `--effort`）和 `invalid-input`。
 
+### 概念图
+
+`deepseekbot concept-art` 调用宿主 bridge 方法 `conceptArt`。这里不接收 API 密钥。`status` 报告手选的图像锁、该锁的凭证引用是否已配置，以及聊天模型目录不是这条图像路由。`request` 从标准输入读一个 JSON。`resume` 和 `cancel` 需要会话号和原来的操作键。`accept <session> <key> <context-version>` 读取已存任务，不把解析过的图像当成可交付成品：媒体限额未配置，`mediaVerified` 保持 false，`deliverable` 保持 false。路由带不了的参考图会被阻断。拒绝码包括 `usage` 和 `invalid-input`。
+
+```bash
+deepseekbot concept-art status
+deepseekbot concept-art request
+deepseekbot concept-art resume <session> <key>
+deepseekbot concept-art cancel <session> <key>
+deepseekbot concept-art accept <session> <key> <context-version>
+```
+
 ### 空闲压缩（Idle Compaction）
 
 Bot 的 Orchestrator Session 没有进行中的轮次、也没有待处理的 Bot Inbox Admission 时，Host 会在所用模型线路提示缓存寿命的一半（最少 15 分钟）通过 DSH（与 `/compact` 同一路径）压缩它，让长历史在服务商仍按缓存命中价读取时就被压缩。只压缩超过该线路 DSH 默认自动压缩阈值一半的会话；Assignment 和审批复核会话从不压缩。聊天中不显示任何内容。该设置对整个 Profile 生效，默认开启。

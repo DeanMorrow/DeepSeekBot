@@ -6,6 +6,10 @@ import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local';
 import { describe, expect, it } from 'vitest';
 
 import { apply, createCore, type BotHarnessCore } from '../src/plugin.js';
+import { createBridgeMethods } from '../src/bridge/methods.js';
+import { runConceptArtCommand } from '../src/bots/cli-concept-art.js';
+import { callConceptArt } from '../../client/src/client/concept-art-bridge.js';
+import type { BridgeCall } from '../../client/src/client/bridge.js';
 import { createTempRoot, trackTestOwner } from './helpers.js';
 
 const PNG =
@@ -17,29 +21,37 @@ const FIXTURES = JSON.parse(
 };
 
 /** Which chain actually executes each fixture. One consumer test is not 21 host behaviors. */
-const FIXTURE_CHAIN: Record<string, 'host' | 'consumer-only'> = {
+const FIXTURE_CHAIN: Record<string, 'host'> = {
   F_STYLE_NONE: 'host',
-  F_STYLE_SELECTED: 'consumer-only',
+  F_STYLE_SELECTED: 'host',
   F_STYLE_SWITCH_SELECTED: 'host',
-  F_STYLE_NONE_RAW_WATERCOLOR: 'consumer-only',
-  F_STYLE_DISABLED_SUCCESS: 'consumer-only',
+  F_STYLE_NONE_RAW_WATERCOLOR: 'host',
+  F_STYLE_DISABLED_SUCCESS: 'host',
   F_BLOCK_CONFLICT: 'host',
   F_EMPTY_RAW: 'host',
-  F_MISSING_HOST_CONTEXT: 'consumer-only',
+  F_MISSING_HOST_CONTEXT: 'host',
   F_RETRY_SAME_OPERATION: 'host',
-  F_EXPLICIT_NEW_GENERATION: 'consumer-only',
+  F_EXPLICIT_NEW_GENERATION: 'host',
   F_IDEM_DIFF_PAYLOAD_REJECT: 'host',
-  F_CONTEXT_VERSION_REJECT: 'consumer-only',
+  F_CONTEXT_VERSION_REJECT: 'host',
   F_CROSS_PROJECT: 'host',
   F_CANCEL_LATE: 'host',
-  F_BAD_BASE64: 'consumer-only',
-  F_JSON_AS_B64: 'consumer-only',
-  F_TRUNCATED_PNG_HEADER: 'consumer-only',
-  F_FAKE_URL: 'consumer-only',
-  F_EMPTY_ARTIFACT: 'consumer-only',
-  F_ERROR_RESIDUAL_ACCEPT_GATE: 'consumer-only',
+  F_BAD_BASE64: 'host',
+  F_JSON_AS_B64: 'host',
+  F_TRUNCATED_PNG_HEADER: 'host',
+  F_FAKE_URL: 'host',
+  F_EMPTY_ARTIFACT: 'host',
+  F_ERROR_RESIDUAL_ACCEPT_GATE: 'host',
   F_REF_LOCAL_BUT_ROUTE_PROMPT_ONLY: 'host',
 };
+
+const NOT_RUN = [
+  'paid-provider-network',
+  'url-byte-download',
+  'host-accept-as-deliverable-image',
+  'web-ui-screen',
+  'forged-stale-provider-error-on-bridge',
+] as const;
 
 const caseById = (id: string) => FIXTURES.cases.find((item) => item.id === id)!;
 
@@ -155,10 +167,9 @@ describe('concept art host chain', () => {
     });
     expect(JSON.stringify(opened)).not.toContain('sk-host-test');
     expect(opened.task?.artifact).toMatchObject({ kind: 'base64', mediaVerified: false });
-    expect(
-      core.conceptArt.accept(opened.task!, String(none.input.input_fingerprint)),
-    ).toMatchObject({
+    expect(core.conceptArt.accept(opened.task!, 1)).toMatchObject({
       accept: false,
+      deliverable: false,
       reason: 'LIMITS_UNCONFIGURED',
       mediaVerified: false,
     });
@@ -220,7 +231,7 @@ describe('concept art host chain', () => {
       sessionId: 'fixture-ctx-1',
       submit_prompt: 'DIFFERENT PROMPT BETA',
       submit_allowed: true,
-      input_fingerprint: 'fp-t1-v2-diff',
+      operation_id: 'op-t1-renamed',
     } as never);
     expect(mismatch).toMatchObject({
       status: 'BLOCKED',
@@ -238,8 +249,9 @@ describe('concept art host chain', () => {
       'fixture-ctx-1',
       String(none.input.route_idempotency_key),
     );
-    expect(core.conceptArt.accept(late, String(none.input.input_fingerprint))).toMatchObject({
+    expect(core.conceptArt.accept(late, 1)).toMatchObject({
       accept: false,
+      deliverable: false,
       reason: 'LOCAL_STOP',
       mediaVerified: false,
     });
@@ -274,6 +286,215 @@ describe('concept art host chain', () => {
     ).rejects.toMatchObject({ reason: 'wrong-project' });
     await restarted.runtime.close();
     restarted.externalMessaging.close();
+    await fiber.dispose();
+  });
+
+  it('runs the remaining fixtures through the client bridge without delivering media', async () => {
+    expect(NOT_RUN).toContain('host-accept-as-deliverable-image');
+    expect(NOT_RUN).toContain('url-byte-download');
+    const home = createTempRoot('concept-art-entry-');
+    const ctx = new Context();
+    const fiber = ctx.plugin(LocalCredentialProvider, {
+      path: join(home, '.credentials.yaml'),
+      watch: false,
+    });
+    await fiber.await();
+    const fetchedUrls: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      fetchedUrls.push(String(input));
+      const raw = String(init?.body ?? '');
+      const body = raw.includes('BAD_B64')
+        ? { data: [{ b64_json: '%%%not-base64%%%' }] }
+        : raw.includes('BAD_JSON')
+          ? { data: [{ b64_json: caseById('F_JSON_AS_B64').input.value_b64 }] }
+          : raw.includes('BAD_TRUNC')
+            ? { data: [{ b64_json: caseById('F_TRUNCATED_PNG_HEADER').input.value_b64 }] }
+            : raw.includes('BAD_URL')
+              ? { data: [{ url: caseById('F_FAKE_URL').input.provider_url }] }
+              : raw.includes('BAD_EMPTY')
+                ? { data: [{}] }
+                : { data: [{ b64_json: PNG }] };
+      return new Response(JSON.stringify(body), { status: 200 });
+    };
+    const core = createCore({
+      dshHome: home,
+      credentials: () => ctx.credentials,
+      sharedRouteFetch: fetchImpl,
+    });
+    trackTestOwner(core.operationalDatabase);
+    await core.sharedRoute.saveInstance(
+      {
+        id: 'apiyi-image',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'image',
+        protocol: 'openai-images',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-image-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-host-test',
+    );
+    core.sharedRoute.lock('concept-art', 'image', 'apiyi-image', 'fixture-image-model');
+    core.ownership.claim({
+      sessionId: 'fixture-ctx-1',
+      botSlug: 'ada',
+      rootRole: 'orchestrator',
+      at: '2026-09-17T00:00:00.000Z',
+    });
+    const methods = createBridgeMethods({
+      ...core,
+      conceptArt: core.conceptArt,
+      sharedRoute: core.sharedRoute,
+    });
+    const call = (async (endpoint, payload) => {
+      if (endpoint !== 'conceptArt') throw new Error(endpoint);
+      return methods.conceptArt(payload);
+    }) as BridgeCall;
+    const status = await callConceptArt(call, { action: 'status' });
+    expect(status).toMatchObject({
+      locked: true,
+      model: 'fixture-image-model',
+      credentialConfigured: true,
+      groupCoverage: 'unverified',
+      catalog: 'not-the-image-route',
+      limitsConfigured: false,
+      mediaDelivery: 'closed',
+      referenceImages: 'blocked-prompt-only',
+    });
+    const cliStatus = await runConceptArtCommand(
+      'concept-art',
+      ['status'],
+      async () => async (_method, payload) => {
+        const result = await methods.conceptArt(payload);
+        if (!result.ok) throw new Error(result.error.code);
+        return result.value;
+      },
+      async () => '',
+    );
+    expect(cliStatus).toMatchObject({ limitsConfigured: false, catalog: 'not-the-image-route' });
+
+    const ask = async (itemId: string, extra: Record<string, unknown> = {}) => {
+      const item = caseById(itemId);
+      return callConceptArt(call, {
+        action: 'request',
+        request: {
+          ...item.input,
+          sessionId: 'fixture-ctx-1',
+          submit_prompt: String(
+            item.expected.submit_prompt ?? item.input.submit_prompt ?? 'prompt',
+          ),
+          submit_allowed: true,
+          context_version: item.input.context_version ?? 1,
+          ...extra,
+        },
+      }) as Promise<Record<string, unknown>>;
+    };
+    expect(await ask('F_STYLE_SELECTED')).toMatchObject({ status: 'ALLOWED' });
+    expect(String((await ask('F_STYLE_NONE_RAW_WATERCOLOR')).prompt)).toContain('watercolor');
+    expect(await ask('F_STYLE_DISABLED_SUCCESS')).toMatchObject({ status: 'ALLOWED' });
+    const opened = await ask('F_STYLE_NONE');
+    const fresh = await ask('F_EXPLICIT_NEW_GENERATION');
+    expect(fresh.idempotencyKey).toBe('op-t1-2');
+    const version = await ask('F_CONTEXT_VERSION_REJECT', {
+      raw_requirement: '一张图',
+      submit_prompt: 'same',
+      style: { state: 'none' },
+      input_fingerprint: 'fp-t1-v1',
+      context_version: 2,
+    });
+    expect(version).toMatchObject({ status: 'BLOCKED', reasons: ['CONTEXT_VERSION_MISMATCH'] });
+    expect(opened).toMatchObject({ status: 'ALLOWED', optimization: 'not-performed' });
+    const missing = (await callConceptArt(call, {
+      action: 'request',
+      request: {
+        ...caseById('F_MISSING_HOST_CONTEXT').input,
+        sessionId: null,
+        raw_requirement: '一张图',
+        submit_prompt: 'a picture',
+        submit_allowed: true,
+        style: { state: 'none' },
+        input_fingerprint: 'fp-missing',
+        route_idempotency_key: 'op-missing',
+        operation_id: 'op-missing',
+        context_version: 1,
+      },
+    })) as { status: string; reasons: string[] };
+    expect(missing).toMatchObject({
+      status: 'INTEGRATION_BLOCKED',
+      reasons: ['HOST_CONTEXT_CONTRACT_MISSING'],
+    });
+    expect(
+      await callConceptArt(call, {
+        action: 'accept',
+        sessionId: 'fixture-ctx-1',
+        idempotencyKey: 'op-t1-1',
+        contextVersion: 1,
+      }),
+    ).toMatchObject({
+      accept: false,
+      deliverable: false,
+      reason: 'LIMITS_UNCONFIGURED',
+      mediaVerified: false,
+    });
+    const stopped = await callConceptArt(call, {
+      action: 'cancel',
+      sessionId: 'fixture-ctx-1',
+      idempotencyKey: 'op-t1-1',
+    });
+    expect(stopped).toMatchObject({ localStop: true });
+    expect(
+      await callConceptArt(call, {
+        action: 'accept',
+        sessionId: 'fixture-ctx-1',
+        idempotencyKey: 'op-t1-1',
+        contextVersion: 1,
+      }),
+    ).toMatchObject({ accept: false, reason: 'LOCAL_STOP', mediaVerified: false });
+
+    for (const [marker, key, error] of [
+      ['BAD_B64', 'bad-b64', 'invalid-payload'],
+      ['BAD_JSON', 'bad-json', 'invalid-payload'],
+      ['BAD_TRUNC', 'bad-trunc', 'invalid-payload'],
+      ['BAD_URL', 'bad-url', 'invalid-payload'],
+      ['BAD_EMPTY', 'bad-empty', 'empty-artifact'],
+    ] as const) {
+      const task = await core.sharedRoute.submit(
+        'concept-art',
+        'image',
+        'session:fixture-ctx-1',
+        key,
+        marker,
+      );
+      expect(task.error).toBe(error);
+    }
+    expect(fetchedUrls.every((url) => url === 'https://api.apiyi.com/v1/images/generations')).toBe(
+      true,
+    );
+    const separated = await runConceptArtCommand(
+      'concept-art',
+      ['request'],
+      async () => async (_method, payload) => {
+        const result = await methods.conceptArt(payload);
+        if (!result.ok) throw new Error(result.error.code);
+        return result.value;
+      },
+      async () =>
+        JSON.stringify({
+          raw_requirement: '完全透明的护罩配不透光底座',
+          submit_prompt: 'A transparent shield on an opaque base.',
+          style: { state: 'none' },
+          sessionId: 'fixture-ctx-1',
+          context_version: 1,
+          operation_id: 'op-shield-entry',
+          route_idempotency_key: 'op-shield-entry',
+          input_fingerprint: 'fp-shield-entry',
+          submit_allowed: true,
+        }),
+    );
+    expect(separated).toMatchObject({ status: 'ALLOWED' });
+    await core.runtime.close();
+    core.externalMessaging.close();
     await fiber.dispose();
   });
 });

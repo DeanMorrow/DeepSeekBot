@@ -1344,6 +1344,10 @@ export class BotharnessBridgeService extends TypertRemoteService {
     return unwrap(this.methods.voiceProviders(slug === undefined ? {} : { slug }));
   }
 
+  conceptArt(payload: Record<string, unknown>): Promise<unknown> {
+    return unwrapAsync(this.methods.conceptArt(payload));
+  }
+
   voiceProviderAdd(
     preset: string,
     name?: string,
@@ -3012,6 +3016,7 @@ markRemoteMethods(BotharnessBridgeService.prototype, [
   'approvalReviewerModel',
   'approvalReviewerModelSet',
   'voiceProviders',
+  'conceptArt',
   'voiceProviderAdd',
   'voiceProviderRemove',
   'voiceProviderTest',
