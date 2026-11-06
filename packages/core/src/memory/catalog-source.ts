@@ -13,7 +13,7 @@ export interface CatalogInventoryView {
   brief: string | null;
   sourceRef: typeof OPS_CATALOG_SOURCE;
   entryRef: string | null;
-  version: number | null;
+  version: number | string | null;
   updatedAt: string | null;
   status: 'active' | 'stale' | 'invalid' | 'unreachable' | 'unpopulated';
 }
@@ -23,9 +23,10 @@ export interface CatalogSourceView {
   caller: 'profile-owner' | `bot:${string}`;
   sourceRef: typeof OPS_CATALOG_SOURCE;
   status: 'unreachable' | 'unauthorized' | 'invalid' | 'active';
-  version: number | null;
+  version: number | string | null;
   updatedAt: string | null;
   fingerprint: string;
+  authorizationGaps: Array<{ field: string; reason: 'unproven-field-contract' }>;
   inventories: CatalogInventoryView[];
 }
 
@@ -35,7 +36,7 @@ export interface CatalogOpenView {
   sourceRef: typeof OPS_CATALOG_SOURCE;
   entryRef: string;
   status: CatalogSourceView['status'] | CatalogInventoryView['status'];
-  version: number | null;
+  version: number | string | null;
   updatedAt: string | null;
   items: Array<{ id: string; name: string; brief: string }>;
 }
@@ -88,39 +89,90 @@ function cleanText(value: unknown, limit: number): string | undefined {
   return text;
 }
 
-function empty(caller: CatalogCaller, status: CatalogSourceView['status']): CatalogSourceView {
+function empty(
+  caller: CatalogCaller,
+  status: CatalogSourceView['status'],
+  authorizationGaps: CatalogSourceView['authorizationGaps'] = [],
+): CatalogSourceView {
   const view = {
     caller: callerLabel(caller),
     sourceRef: OPS_CATALOG_SOURCE,
     status,
     version: null,
     updatedAt: null,
+    authorizationGaps,
     inventories: [] as CatalogInventoryView[],
   };
   return { ok: true, ...view, fingerprint: fingerprint(view) };
+}
+
+function readVersion(value: unknown): number | string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (text === '' || leaksPath(text)) return null;
+  return /^-?\d+$/.test(text) ? Number(text) : text;
+}
+
+function versionsMatch(left: number | string | null, right: number | string | null): boolean {
+  if (left === null || right === null) return false;
+  if (typeof left === 'number' && typeof right === 'string' && /^-?\d+$/.test(right)) {
+    return left === Number(right);
+  }
+  if (typeof right === 'number' && typeof left === 'string' && /^-?\d+$/.test(left)) {
+    return right === Number(left);
+  }
+  return left === right;
+}
+
+function readTime(record: Record<string, unknown>): string | null {
+  const value =
+    typeof record.updatedAt === 'string'
+      ? record.updatedAt
+      : typeof record.updated_at === 'string'
+        ? record.updated_at
+        : undefined;
+  return cleanText(value, 40) ?? null;
 }
 
 const CATEGORY_FIELDS = new Set([
   'id',
   'brief',
   'name',
+  'kind',
   'version',
   'updatedAt',
+  'updated_at',
   'entry',
   'status',
   'sourceRef',
   'owner',
+  'purpose',
+  'scope',
+  'summary',
+  'notes',
+  'presentation',
+  'count',
+  'denominator_definition',
   'visibility',
   'private',
   'display',
   'audiences',
 ]);
 const ENTRY_FILE_FIELDS = new Set([
+  'id',
   'registryId',
+  'name',
+  'owner',
   'version',
   'updatedAt',
+  'updated_at',
   'items',
   'sourceRef',
+  'count',
+  'denominator_definition',
+  'status_source_policy',
+  'unscanned',
   'visibility',
   'private',
   'display',
@@ -130,6 +182,15 @@ const ITEM_FIELDS = new Set([
   'id',
   'name',
   'brief',
+  'purpose',
+  'owner',
+  'status',
+  'version',
+  'updatedAt',
+  'updated_at',
+  'trigger',
+  'entry',
+  'superseded_by',
   'visibility',
   'private',
   'display',
@@ -140,15 +201,25 @@ const ROOT_FIELDS = new Set([
   'sourceRef',
   'version',
   'updatedAt',
+  'updated_at',
   'display',
   'inventories',
+  'categories',
   'id',
+  'name',
   'role',
   'entry',
   'owner',
   'brief',
   'status',
   'revisions',
+  'anti_nesting',
+  'scorecard',
+  'unique_entry_json',
+  'unique_entry_md',
+  'contract',
+  'contract_version',
+  'privacy',
 ]);
 
 function knownAudience(value: unknown): value is string {
@@ -199,11 +270,23 @@ function admits(
   known: Set<string>,
   caller: CatalogCaller,
 ): boolean {
-  if (Object.keys(record).some((key) => !known.has(key))) return false;
+  if (Object.keys(record).some((key) => !key.startsWith('machine_') && !known.has(key)))
+    return false;
   const layer = layerAudiences(record);
   if (layer === 'deny') return false;
   if (layer === 'inherit') return true;
   return layer.includes(callerAudience(caller));
+}
+
+function authorizationGaps(
+  record: Record<string, unknown>,
+): CatalogSourceView['authorizationGaps'] {
+  const gaps: CatalogSourceView['authorizationGaps'] = [];
+  if ('privacy' in record) gaps.push({ field: 'privacy', reason: 'unproven-field-contract' });
+  if ('contract' in record || 'contract_version' in record) {
+    gaps.push({ field: 'contract', reason: 'unproven-field-contract' });
+  }
+  return gaps;
 }
 
 function allowed(display: unknown, caller: CatalogCaller): boolean {
@@ -246,36 +329,63 @@ interface RegistryInventory {
   id: string;
   brief: string | null;
   briefRejected: boolean;
-  version: number | null;
+  version: number | string | null;
   updatedAt: string | null;
   entry: string | null;
   status: string;
   record: Record<string, unknown>;
 }
 
+function rowList(value: unknown): Record<string, unknown>[] | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return undefined;
+  const rows: Record<string, unknown>[] = [];
+  for (const row of value) {
+    if (typeof row !== 'object' || row === null) return undefined;
+    rows.push(row as Record<string, unknown>);
+  }
+  return rows;
+}
+
 function inventoriesOf(value: unknown): RegistryInventory[] | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const rows = (value as { inventories?: unknown }).inventories;
-  if (!Array.isArray(rows)) return undefined;
+  const body = value as { inventories?: unknown; categories?: unknown };
+  const inventories = rowList(body.inventories);
+  const categories = rowList(body.categories);
+  if (inventories === undefined || categories === undefined) return undefined;
+  const categoryById = new Map<string, Record<string, unknown>>();
+  for (const category of categories) {
+    if (typeof category.id !== 'string') return undefined;
+    if (categoryById.has(category.id)) return undefined;
+    categoryById.set(category.id, category);
+  }
+  const rows = inventories.length > 0 ? inventories : categories;
   const parsed: RegistryInventory[] = [];
   const seen = new Set<string>();
-  for (const row of rows) {
-    if (typeof row !== 'object' || row === null) return undefined;
-    const record = row as Record<string, unknown>;
+  for (const record of rows) {
     if (typeof record.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(record.id))
       return undefined;
     if (seen.has(record.id)) return undefined;
     seen.add(record.id);
-    const brief = cleanText(record.brief, 160) ?? null;
+    const category = categoryById.get(record.id);
+    const ownEntry = typeof record.entry === 'string' ? record.entry : null;
+    const categoryEntry = typeof category?.entry === 'string' ? category.entry : null;
+    const entry = ownEntry ?? categoryEntry;
+    const conflict = ownEntry !== null && categoryEntry !== null && ownEntry !== categoryEntry;
+    const rawBrief = typeof record.brief === 'string' ? record.brief : undefined;
+    const brief = cleanText(record.brief, 160) ?? cleanText(record.name, 80) ?? null;
     parsed.push({
       id: record.id,
-      brief,
+      brief: conflict ? null : brief,
       briefRejected:
-        typeof record.brief === 'string' && record.brief.trim() !== '' && brief === null,
-      record,
-      version: typeof record.version === 'number' ? record.version : null,
-      updatedAt: cleanText(record.updatedAt, 40) ?? null,
-      entry: typeof record.entry === 'string' ? record.entry : null,
+        conflict ||
+        (rawBrief !== undefined &&
+          rawBrief.trim() !== '' &&
+          cleanText(record.brief, 160) === undefined),
+      record: conflict ? { id: record.id, permissionMode: 'entry-conflict' } : record,
+      version: readVersion(record.version),
+      updatedAt: readTime(record),
+      entry,
       status: typeof record.status === 'string' ? record.status : 'active',
     });
   }
@@ -288,9 +398,10 @@ function loadRegistry(configPath: string):
       status: 'ready';
       root: string;
       sourceRef: string;
-      version: number | null;
+      version: number | string | null;
       updatedAt: string | null;
       display: unknown;
+      authorizationGaps: CatalogSourceView['authorizationGaps'];
       inventories: RegistryInventory[];
     } {
   if (!existsSync(configPath)) return { status: 'unreachable' };
@@ -337,9 +448,10 @@ function loadRegistry(configPath: string):
     status: 'ready',
     root: dirname(registryFile),
     sourceRef: OPS_CATALOG_SOURCE,
-    version: typeof body.version === 'number' ? body.version : null,
-    updatedAt: cleanText(body.updatedAt, 40) ?? null,
+    version: readVersion(body.version),
+    updatedAt: readTime(body),
     display: body.display,
+    authorizationGaps: authorizationGaps(body),
     inventories,
   };
 }
@@ -384,7 +496,9 @@ function categoryView(root: string, row: RegistryInventory): CatalogInventoryVie
   }
   const body = parsed as { registryId?: unknown; version?: unknown };
   if (body.registryId !== row.id) return { ...base, entryRef: null, status: 'invalid' };
-  if (body.version !== row.version) return { ...base, entryRef: null, status: 'stale' };
+  if (!versionsMatch(readVersion(body.version), row.version)) {
+    return { ...base, entryRef: null, status: 'stale' };
+  }
   return {
     ...base,
     entryRef: `${OPS_CATALOG_SOURCE}#${row.id}`,
@@ -399,7 +513,8 @@ export function readAuthorizedOpsCatalog(
   if (configPath === undefined || configPath.trim() === '') return empty(caller, 'unreachable');
   const loaded = loadRegistry(configPath);
   if (loaded.status !== 'ready') return empty(caller, loaded.status);
-  if (!allowed(loaded.display, caller)) return empty(caller, 'unauthorized');
+  if (!allowed(loaded.display, caller))
+    return empty(caller, 'unauthorized', loaded.authorizationGaps);
   const inventories = loaded.inventories.flatMap((row) =>
     admits(row.record, CATEGORY_FIELDS, caller) && entryFileAdmits(loaded.root, row.entry, caller)
       ? [categoryView(loaded.root, row)]
@@ -411,6 +526,7 @@ export function readAuthorizedOpsCatalog(
     status: 'active' as const,
     version: loaded.version,
     updatedAt: loaded.updatedAt,
+    authorizationGaps: loaded.authorizationGaps,
     inventories,
   };
   return { ok: true, ...view, fingerprint: fingerprint(view) };

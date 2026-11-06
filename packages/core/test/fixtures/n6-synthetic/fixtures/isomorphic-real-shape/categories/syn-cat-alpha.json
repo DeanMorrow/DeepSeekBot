@@ -1,0 +1,41 @@
+{
+  "id": "syn-cat-alpha",
+  "registryId": "syn-cat-alpha",
+  "version": 1,
+  "updated_at": "2026-11-06T00:00:00.000Z",
+  "updatedAt": "2026-11-06T00:00:00.000Z",
+  "name": "SYNTHETIC Category Alpha Entry File",
+  "owner": "synthetic-owner-label",
+  "count": 2,
+  "denominator_definition": "SYNTHETIC denominator definition",
+  "status_source_policy": "synthetic-policy",
+  "unscanned": 0,
+  "machine_primary": "synthetic-machine-primary-alpha",
+  "items": [
+    {
+      "id": "syn-item-001",
+      "name": "SYNTHETIC Item One",
+      "brief": "SYNTHETIC item brief one",
+      "purpose": "SYNTHETIC item purpose one",
+      "owner": "synthetic-owner-label",
+      "status": "active",
+      "version": 1,
+      "updated_at": "2026-11-06T00:00:00.000Z",
+      "trigger": "synthetic-trigger-one",
+      "entry": "synthetic://entries/syn-item-001",
+      "superseded_by": null
+    },
+    {
+      "id": "syn-item-002",
+      "name": "SYNTHETIC Item Two",
+      "brief": "SYNTHETIC item brief two",
+      "purpose": "SYNTHETIC item purpose two",
+      "owner": "synthetic-owner-label",
+      "status": "active",
+      "version": 1,
+      "updated_at": "2026-11-06T00:00:00.000Z",
+      "trigger": "synthetic-trigger-two",
+      "entry": "synthetic://entries/syn-item-002"
+    }
+  ]
+}

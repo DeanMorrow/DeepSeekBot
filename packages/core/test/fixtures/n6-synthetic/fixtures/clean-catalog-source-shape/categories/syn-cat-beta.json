@@ -1,0 +1,12 @@
+{
+  "registryId": "syn-cat-beta",
+  "version": 1,
+  "updatedAt": "2026-11-06T00:00:00.000Z",
+  "items": [
+    {
+      "id": "syn-item-101",
+      "name": "SYNTHETIC Item Beta",
+      "brief": "SYNTHETIC item brief beta"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -379,5 +379,54 @@ describe('authorized ops catalog source', () => {
       'unauthorized',
     );
     expect(readAuthorizedOpsCatalog(ownerOnly, { kind: 'profile-owner' }).status).toBe('active');
+  });
+
+  it('reads an authorized synthetic real-shaped catalog without projecting machine fields', () => {
+    const config = join(
+      import.meta.dirname,
+      'fixtures/n6-synthetic/fixtures/isomorphic-real-shape/catalog-source.json',
+    );
+    const owner = { kind: 'profile-owner' as const };
+    const view = readAuthorizedOpsCatalog(config, owner);
+    expect(view.status).toBe('active');
+    expect(view.version).toBe('9.9.9-synthetic');
+    expect(view.updatedAt).toBe('2026-11-06T00:00:00.000Z');
+    expect(view.authorizationGaps.map((gap) => gap.field).sort()).toEqual(['contract', 'privacy']);
+    expect(view.inventories.map((item) => item.id)).toEqual(['syn-cat-alpha', 'syn-cat-beta']);
+    expect(view.inventories.map((item) => item.brief)).toEqual([
+      'SYNTHETIC brief alpha UI/UX style slash ok',
+      'SYNTHETIC brief beta a/b ratio style',
+    ]);
+    const opened = openAuthorizedOpsEntry(config, owner, 'ops:asset-catalog#syn-cat-alpha');
+    expect(opened.ok).toBe(true);
+    expect(opened.items.map((item) => item.id)).toEqual(['syn-item-001', 'syn-item-002']);
+    const projected = JSON.stringify({ view, opened });
+    expect(projected).not.toContain('machine_');
+    expect(projected).not.toContain('synthetic://');
+    expect(projected).not.toContain('SYNTHETIC should be hidden');
+    expect(readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'ada' }).status).toBe(
+      'unauthorized',
+    );
+    const stripped = JSON.parse(
+      readFileSync(
+        join(
+          import.meta.dirname,
+          'fixtures/n6-synthetic/fixtures/isomorphic-real-shape/registry.json',
+        ),
+        'utf8',
+      ),
+    ) as Record<string, unknown>;
+    delete stripped.display;
+    const root = createTempRoot('catalog-no-display-');
+    mkdirSync(join(root, 'official'), { recursive: true });
+    writeFileSync(join(root, 'official', 'registry.json'), JSON.stringify(stripped));
+    writeFileSync(
+      join(root, 'catalog-source.json'),
+      JSON.stringify({ sourceRef: 'ops:asset-catalog', registryPath: 'official/registry.json' }),
+    );
+    const hidden = readAuthorizedOpsCatalog(join(root, 'catalog-source.json'), owner);
+    expect(hidden.status).toBe('unauthorized');
+    expect(hidden.inventories).toEqual([]);
+    expect(JSON.stringify(hidden)).not.toContain('SYNTHETIC brief');
   });
 });

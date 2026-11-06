@@ -1,0 +1,8 @@
+{
+  "kind": "SYNTHETIC_ONLY",
+  "purpose": "Unknown auth-ish field on category must not appear / must deny layer",
+  "display_notice": "SYNTHETIC_TEST_SAMPLE_ONLY \u2014 NOT formal Owner authorization; Owner card still waiting user",
+  "catalog_source": {
+    "kind": "SYNTHETIC_ONLY"
+  }
+}

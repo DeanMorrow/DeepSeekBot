@@ -1,0 +1,17 @@
+{
+  "registryId": "syn-cat-alpha",
+  "version": 1,
+  "updatedAt": "2026-11-06T00:00:00.000Z",
+  "items": [
+    {
+      "id": "syn-item-001",
+      "name": "SYNTHETIC Item One",
+      "brief": "SYNTHETIC item brief one"
+    },
+    {
+      "id": "syn-item-002",
+      "name": "SYNTHETIC Item Two",
+      "brief": "SYNTHETIC item brief two"
+    }
+  ]
+}

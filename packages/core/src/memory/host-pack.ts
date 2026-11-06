@@ -272,7 +272,7 @@ export function migratePack(memoryDir: string, seedDir: string): PackResult {
 
 export interface CatalogOpsRecord {
   status?: 'active' | 'stale' | 'unauthorized' | 'invalid' | 'unreachable';
-  version: number | null;
+  version: number | string | null;
   updatedAt: string | null;
   fingerprint?: string;
   briefs: readonly { id: string; name: string; brief: string; entryRef?: string | null }[];
