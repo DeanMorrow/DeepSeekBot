@@ -1,5 +1,5 @@
 import type { AssignmentSummary, OrchestratorAssignmentAccess } from './bot-runtime.js';
-import { coveredByHumanMessage, type WorkOrderAuthority } from './super-agent-authority.js';
+import { sealToolInput, type WorkOrderAuthority } from './super-agent-authority.js';
 import {
   newSuperAgentRunId,
   parseWorkOrders,
@@ -274,39 +274,36 @@ export function sealWorkOrders(
     grantId: string;
     orders: unknown;
     now: string;
-    sourceEventId?: string;
     scopeKey: string;
     approvalToken?: string;
+    approvalCallId?: string;
     toolInput: string;
   },
   authority: WorkOrderAuthority,
 ): { orderIds: string[]; sourceKind: string; sourceRef: string } | { reason: string } {
   if (!authority.grantActive(input.botSlug, input.grantId)) return { reason: 'grant-unauthorized' };
+  const ordersText = typeof input.orders === 'string' ? input.orders : JSON.stringify(input.orders);
+  if (input.toolInput !== sealToolInput({ grant_id: input.grantId, work_orders: ordersText })) {
+    return { reason: 'approval-required' };
+  }
   const orders = parseWorkOrders(input.orders);
   if (!Array.isArray(orders)) return orders;
-  const sourceEventId = input.sourceEventId?.trim() ?? '';
-  let sourceKind = '';
-  let sourceRef = '';
-  if (sourceEventId !== '') {
-    const message = authority.humanSource(input.botSlug, sourceEventId);
-    if (message === undefined) return { reason: 'source-not-found' };
-    if (!coveredByHumanMessage(message.body, orders)) return { reason: 'source-mismatch' };
-    sourceKind = 'human-message';
-    sourceRef = sourceEventId;
-  } else {
-    const rule = authority.standingExact(input.botSlug, input.scopeKey, input.toolInput);
-    const call =
-      rule === undefined ? authority.grantedCall(input.approvalToken, input.toolInput) : undefined;
-    if (rule !== undefined) {
-      sourceKind = 'approval-rule';
-      sourceRef = rule.ruleId;
-    } else if (call !== undefined) {
-      sourceKind = 'approval-call';
-      sourceRef = call.callId;
-    } else {
-      return { reason: 'approval-required' };
-    }
-  }
+  const rule = authority.standingExact(input.botSlug, input.scopeKey, input.toolInput);
+  const call =
+    rule === undefined
+      ? authority.grantedCall({
+          token: input.approvalToken ?? '',
+          callId: input.approvalCallId ?? '',
+          botSlug: input.botSlug,
+          sessionId: input.sessionId,
+          grantId: input.grantId,
+          toolInput: input.toolInput,
+        })
+      : undefined;
+  const sourceKind =
+    rule !== undefined ? 'approval-rule' : call !== undefined ? 'approval-call' : '';
+  const sourceRef = rule?.ruleId ?? call?.callId ?? '';
+  if (sourceKind === '' || sourceRef === '') return { reason: 'approval-required' };
   const sealed = ledger.seal({
     botSlug: input.botSlug,
     sessionId: input.sessionId,

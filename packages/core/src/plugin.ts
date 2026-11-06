@@ -2591,22 +2591,23 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
         }
         if (!toolApproval.validAfterDecision(agent, execution.callId))
           return { kind: 'deny', reason: 'Approval rule scope changed' };
-        if (execution.name === 'super_agent_seal') {
+        if (execution.name === 'super_agent_seal' && owner !== undefined) {
           const args =
             typeof execution.arguments === 'object' && execution.arguments !== null
               ? (execution.arguments as Record<string, unknown>)
               : {};
-          noteSuperAgentApproval(
-            String(execution.token),
-            String(execution.callId),
-            sealToolInput({
-              grant_id: String(args.grant_id ?? ''),
-              work_orders: String(args.work_orders ?? ''),
-              ...(typeof args.source_event_id === 'string'
-                ? { source_event_id: args.source_event_id }
-                : {}),
+          const grantId = typeof args.grant_id === 'string' ? args.grant_id : '';
+          noteSuperAgentApproval({
+            token: String(execution.token),
+            callId: String(execution.callId),
+            botSlug: owner.botSlug,
+            sessionId: agent.session.id,
+            grantId,
+            toolInput: sealToolInput({
+              grant_id: grantId,
+              work_orders: typeof args.work_orders === 'string' ? args.work_orders : '',
             }),
-          );
+          });
         }
         if (toolApproval.remembered(agent, execution.callId)) rememberedStarts.add(execution.token);
         const guard = toolApproval.executionGuard(agent, execution.callId);

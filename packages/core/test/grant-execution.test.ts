@@ -370,7 +370,7 @@ describe('Workspace Grant execution boundary', () => {
     expect(isDshGovernedTool('super_agent_seal')).toBe(true);
     expect(requiresHumanToolApproval('super_agent_seal', { work_orders: '[]' })).toBe(true);
     expect(requiresHumanToolApproval('super_agent_seal', { source_event_id: 'human-1' })).toBe(
-      false,
+      true,
     );
     expect(isDshGovernedTool('secret_cli')).toBe(true);
     expect(

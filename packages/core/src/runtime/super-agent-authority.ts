@@ -15,48 +15,87 @@ export function orchestratorToolScope(
   return JSON.stringify(['orchestrator', cwd, activeIds]);
 }
 
-export function sealToolInput(args: {
-  grant_id?: string;
-  work_orders?: string;
-  source_event_id?: string;
-}): string {
-  const body: Record<string, string> = {
-    grant_id: args.grant_id ?? '',
-    work_orders: args.work_orders ?? '',
-  };
-  if (args.source_event_id !== undefined && args.source_event_id !== '') {
-    body.source_event_id = args.source_event_id;
-  }
-  return JSON.stringify(body, null, 2);
+export function sealToolInput(args: { grant_id?: string; work_orders?: string }): string {
+  return JSON.stringify(
+    {
+      grant_id: args.grant_id ?? '',
+      work_orders: args.work_orders ?? '',
+    },
+    null,
+    2,
+  );
 }
 
-const noted = new Map<string, { callId: string; input: string }>();
+interface NotedApproval {
+  callId: string;
+  botSlug: string;
+  sessionId: string;
+  grantId: string;
+  toolInput: string;
+}
 
-/** Called by the host approval interceptor after a real allow, never by tool arguments. */
-export function noteSuperAgentApproval(token: string, callId: string, input: string): void {
-  noted.set(token, { callId, input });
+const noted = new Map<string, NotedApproval>();
+
+export interface SuperAgentApprovalNote {
+  token: string;
+  callId: string;
+  botSlug: string;
+  sessionId: string;
+  grantId: string;
+  toolInput: string;
+}
+
+function completeNote(input: SuperAgentApprovalNote): boolean {
+  return (
+    input.token !== '' &&
+    input.callId !== '' &&
+    input.botSlug !== '' &&
+    input.sessionId !== '' &&
+    input.grantId !== '' &&
+    input.toolInput !== ''
+  );
+}
+
+/** Host interceptor only, after a real allow. A blank identity is not stored. */
+export function noteSuperAgentApproval(input: SuperAgentApprovalNote): boolean {
+  if (!completeNote(input)) return false;
+  noted.set(input.token, {
+    callId: input.callId,
+    botSlug: input.botSlug,
+    sessionId: input.sessionId,
+    grantId: input.grantId,
+    toolInput: input.toolInput,
+  });
+  return true;
 }
 
 export function takeSuperAgentApproval(
-  token: string | undefined,
-  input: string,
+  input: SuperAgentApprovalNote,
 ): { callId: string } | undefined {
-  if (token === undefined || token === '') return undefined;
-  const row = noted.get(token);
-  if (row === undefined || row.input !== input) return undefined;
-  noted.delete(token);
+  if (!completeNote(input)) return undefined;
+  const row = noted.get(input.token);
+  if (
+    row === undefined ||
+    row.botSlug !== input.botSlug ||
+    row.sessionId !== input.sessionId ||
+    row.grantId !== input.grantId ||
+    row.toolInput !== input.toolInput ||
+    row.callId !== input.callId
+  ) {
+    return undefined;
+  }
+  noted.delete(input.token);
   return { callId: row.callId };
 }
 
 export interface WorkOrderAuthority {
   grantActive(botSlug: string, grantId: string): boolean;
-  humanSource(botSlug: string, sourceEventId: string): { body: string } | undefined;
   standingExact(
     botSlug: string,
     scopeKey: string,
     toolInput: string,
   ): { ruleId: string } | undefined;
-  grantedCall(token: string | undefined, toolInput: string): { callId: string } | undefined;
+  grantedCall(input: SuperAgentApprovalNote): { callId: string } | undefined;
 }
 
 export function createWorkOrderAuthority(
@@ -73,23 +112,6 @@ export function createWorkOrderAuthority(
       );
       return row !== undefined && row.revoked_at === null;
     },
-    humanSource(botSlug, sourceEventId) {
-      if (sourceEventId.startsWith('direct-') || sourceEventId.trim() === '') return undefined;
-      const row = database.read(
-        (db) =>
-          db
-            .prepare(
-              `SELECT source_kind, bot_slug, body FROM source_events WHERE source_event_id = ?`,
-            )
-            .get(sourceEventId) as
-            | { source_kind: string; bot_slug: string; body: string }
-            | undefined,
-      );
-      if (row === undefined || row.bot_slug !== botSlug || row.source_kind !== 'human-message') {
-        return undefined;
-      }
-      return { body: row.body };
-    },
     standingExact(botSlug, scopeKey, toolInput) {
       const rule = rules.match({
         botSlug,
@@ -103,19 +125,10 @@ export function createWorkOrderAuthority(
       }
       return { ruleId: rule.id };
     },
-    grantedCall(token, toolInput) {
-      return takeSuperAgentApproval(token, toolInput);
+    grantedCall(input) {
+      return takeSuperAgentApproval(input);
     },
   };
-}
-
-export function coveredByHumanMessage(body: string, orders: readonly WorkOrder[]): boolean {
-  return orders.every(
-    (order) =>
-      body.includes(order.goal) &&
-      body.includes(order.acceptance) &&
-      order.steps.every((step) => body.includes(step)),
-  );
 }
 
 export function workOrdersJson(orders: readonly WorkOrder[]): string {

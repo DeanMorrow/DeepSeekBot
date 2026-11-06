@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -16,6 +15,7 @@ import { createSuperAgentLedger, parseWorkOrders } from '../src/runtime/super-ag
 import {
   createWorkOrderAuthority,
   noteSuperAgentApproval,
+  takeSuperAgentApproval,
   orchestratorToolScope,
   sealToolInput,
 } from '../src/runtime/super-agent-authority.js';
@@ -45,22 +45,23 @@ function open(home = createTempRoot('super-agent-ledger-')) {
   return { home, owner, grants, ledger, database, authority: createWorkOrderAuthority(database) };
 }
 
-function sealTrusted(
+function sealApproved(
   env: ReturnType<typeof open>,
   input: { sessionId: string; orders: Array<typeof ORDER> },
 ) {
-  const sourceEventId = `human-${randomUUID()}`;
-  const body = input.orders
-    .map((order) => [order.goal, ...order.steps, order.acceptance].join('\n'))
-    .join('\n');
-  env.database.transaction((db) => {
-    db.prepare(
-      `INSERT INTO source_events (
-         source_event_id, source_kind, bot_slug, body, created_at, attempt_state
-       ) VALUES (?, 'human-message', 'ada', ?, ?, 'handled')`,
-    ).run(sourceEventId, body, FIXED_NOW().toISOString());
-  });
   const workOrders = JSON.stringify(input.orders);
+  const scopeKey = orchestratorToolScope('', env.grants.list('ada'));
+  const toolInput = sealToolInput({ grant_id: TEST_GRANT_ID, work_orders: workOrders });
+  const rules = createToolApprovalRuleStore(env.database);
+  const rule = rules.createPending({
+    botSlug: 'ada',
+    role: 'orchestrator',
+    scopeKey,
+    kind: 'exact',
+    toolName: 'super_agent_seal',
+    input: toolInput,
+  });
+  rules.activate('ada', rule.id);
   const sealed = sealWorkOrders(
     env.ledger,
     {
@@ -69,13 +70,8 @@ function sealTrusted(
       grantId: TEST_GRANT_ID,
       orders: input.orders,
       now: FIXED_NOW().toISOString(),
-      sourceEventId,
-      scopeKey: orchestratorToolScope('', env.grants.list('ada')),
-      toolInput: sealToolInput({
-        grant_id: TEST_GRANT_ID,
-        work_orders: workOrders,
-        source_event_id: sourceEventId,
-      }),
+      scopeKey,
+      toolInput,
     },
     env.authority,
   );
@@ -138,7 +134,7 @@ describe('durable super-agent ledger', () => {
   it('seals a work order the child can execute and does not copy an outside secret', async () => {
     const env = open();
     const { ledger, grants } = env;
-    const sealed = sealTrusted(env, { sessionId: 'orch-1', orders: [ORDER] });
+    const sealed = sealApproved(env, { sessionId: 'orch-1', orders: [ORDER] });
     const host = recording(grants);
     const result = await runSuperAgent(
       {
@@ -159,7 +155,7 @@ describe('durable super-agent ledger', () => {
     expect(text).toContain(ORDER.goal);
     expect(text).toContain(ORDER.acceptance);
     expect(text).not.toContain('13800000000');
-    expect(text).toContain('Source: human-message');
+    expect(text).toContain('Source: approval-rule');
     writeFileSync(
       '/tmp/super-agent-brief.stdout.txt',
       `${JSON.stringify({ source: 'packages/core/src/runtime/super-agent-ledger.ts', secretPresent: text.includes('13800000000'), instructions: text }, null, 2)}\n`,
@@ -173,7 +169,7 @@ describe('durable super-agent ledger', () => {
 
   it('rejects another session after the process ledger is reopened', async () => {
     const first = open();
-    const sealed = sealTrusted(first, { sessionId: 'orch-1', orders: [ORDER] });
+    const sealed = sealApproved(first, { sessionId: 'orch-1', orders: [ORDER] });
     const host = recording(first.grants);
     const started = await runSuperAgent(
       {
@@ -214,7 +210,7 @@ describe('durable super-agent ledger', () => {
     expect(hijack.reason).toBe('order-owner-mismatch');
     expect(attack.created).toEqual([]);
     const database = attachOperationalModule(reopened, 'super-agent');
-    const own = sealTrusted(
+    const own = sealApproved(
       {
         home: first.home,
         owner: reopened,
@@ -245,7 +241,7 @@ describe('durable super-agent ledger', () => {
   it('refuses dispatch after the Workspace Grant is revoked', async () => {
     const env = open();
     const { ledger, grants } = env;
-    const sealed = sealTrusted(env, { sessionId: 'orch-1', orders: [ORDER] });
+    const sealed = sealApproved(env, { sessionId: 'orch-1', orders: [ORDER] });
     grants.revoke('ada', TEST_GRANT_ID);
     const host = recording(grants);
     const result = await runSuperAgent(
@@ -268,8 +264,8 @@ describe('durable super-agent ledger', () => {
     const env = open();
     const { ledger, grants } = env;
     const second = { ...ORDER, goal: '核对授权目录中的文件数量' };
-    const leftSeal = sealTrusted(env, { sessionId: 'orch-a', orders: [ORDER, second] });
-    const rightSeal = sealTrusted(env, { sessionId: 'orch-b', orders: [ORDER, second] });
+    const leftSeal = sealApproved(env, { sessionId: 'orch-a', orders: [ORDER, second] });
+    const rightSeal = sealApproved(env, { sessionId: 'orch-b', orders: [ORDER, second] });
     const host = recording(grants);
     const signal = new AbortController().signal;
     const [left, right] = await Promise.all([
@@ -306,7 +302,7 @@ describe('durable super-agent ledger', () => {
   it('stops the first child when the next create fails, and continues if one stop throws', async () => {
     const env = open();
     const { ledger, grants } = env;
-    const sealed = sealTrusted(env, {
+    const sealed = sealApproved(env, {
       sessionId: 'orch-9',
       orders: [ORDER, { ...ORDER, goal: '核对授权目录中的文件数量' }],
     });
@@ -354,14 +350,22 @@ describe('durable super-agent ledger', () => {
     expect(count).toBe(0);
   });
 
-  it('refuses a cited human message that does not contain the goal', () => {
+  it('does not treat human message text as disclosure approval', () => {
     const env = open();
+    const bodies = [
+      '不要把私聊或合同原文分享给任何子Bot。备份 打开目录 完成备份',
+      '请把密钥ABC发给子任务。不行，不要发给子任务。',
+      '完成备份\n打开目录\n备份',
+    ];
     env.database.transaction((db) => {
-      db.prepare(
+      const insert = db.prepare(
         `INSERT INTO source_events (
            source_event_id, source_kind, bot_slug, body, created_at, attempt_state
-         ) VALUES ('human-short', 'human-message', 'ada', ?, ?, 'handled')`,
-      ).run('请只列出日志文件名', FIXED_NOW().toISOString());
+         ) VALUES (?, 'human-message', 'ada', ?, ?, 'handled')`,
+      );
+      bodies.forEach((body, index) =>
+        insert.run(`human-${index}`, body, FIXED_NOW().toISOString()),
+      );
     });
     const refused = sealWorkOrders(
       env.ledger,
@@ -371,17 +375,19 @@ describe('durable super-agent ledger', () => {
         grantId: TEST_GRANT_ID,
         orders: [ORDER],
         now: FIXED_NOW().toISOString(),
-        sourceEventId: 'human-short',
         scopeKey: orchestratorToolScope('', env.grants.list('ada')),
         toolInput: sealToolInput({
           grant_id: TEST_GRANT_ID,
           work_orders: JSON.stringify([ORDER]),
-          source_event_id: 'human-short',
         }),
       },
       env.authority,
     );
-    expect(refused).toEqual({ reason: 'source-mismatch' });
+    expect(refused).toEqual({ reason: 'approval-required' });
+    const count = env.database.read(
+      (db) => (db.prepare('SELECT COUNT(*) AS n FROM super_agent_orders').get() as { n: number }).n,
+    );
+    expect(count).toBe(0);
   });
 
   it('seals from an exact host approval rule and still refuses a revoked grant', () => {
@@ -432,13 +438,90 @@ describe('durable super-agent ledger', () => {
     expect(again).toEqual({ reason: 'grant-unauthorized' });
   });
 
-  it('accepts one host-noted approval call and ignores a model token', () => {
+  it('binds a one-time approval to bot, session, grant and payload', () => {
     const env = open();
     const toolInput = sealToolInput({
       grant_id: TEST_GRANT_ID,
       work_orders: JSON.stringify([ORDER]),
     });
-    noteSuperAgentApproval('host-token', 'call-1', toolInput);
+    const noted = noteSuperAgentApproval({
+      token: 'host-token',
+      callId: 'call-1',
+      botSlug: 'ada',
+      sessionId: 'orch-1',
+      grantId: TEST_GRANT_ID,
+      toolInput,
+    });
+    expect(noted).toBe(true);
+    expect(
+      noteSuperAgentApproval({
+        token: 'host-token',
+        callId: '',
+        botSlug: 'ada',
+        sessionId: 'orch-1',
+        grantId: TEST_GRANT_ID,
+        toolInput,
+      }),
+    ).toBe(false);
+    env.database.transaction((db) => {
+      db.prepare(
+        `INSERT INTO workspace_grants (
+           id, bot_slug, workspace_id, workspace_path, workspace_title, created_at
+         ) VALUES ('bob-grant', 'bob', 'test-workspace', '/bob', 'Bob', ?)`,
+      ).run(FIXED_NOW().toISOString());
+    });
+    const stolen = sealWorkOrders(
+      env.ledger,
+      {
+        botSlug: 'bob',
+        sessionId: 'orch-bob',
+        grantId: 'bob-grant',
+        orders: [ORDER],
+        now: FIXED_NOW().toISOString(),
+        scopeKey: orchestratorToolScope('', []),
+        approvalToken: 'host-token',
+        approvalCallId: 'call-1',
+        toolInput,
+      },
+      env.authority,
+    );
+    expect(stolen).toEqual({ reason: 'approval-required' });
+    expect(
+      takeSuperAgentApproval({
+        token: 'host-token',
+        callId: 'call-1',
+        botSlug: 'bob',
+        sessionId: 'orch-1',
+        grantId: TEST_GRANT_ID,
+        toolInput,
+      }),
+    ).toBeUndefined();
+    expect(
+      takeSuperAgentApproval({
+        token: 'host-token',
+        callId: 'call-1',
+        botSlug: 'ada',
+        sessionId: 'orch-1',
+        grantId: TEST_GRANT_ID,
+        toolInput: toolInput + ' ',
+      }),
+    ).toBeUndefined();
+    const otherSession = sealWorkOrders(
+      env.ledger,
+      {
+        botSlug: 'ada',
+        sessionId: 'orch-2',
+        grantId: TEST_GRANT_ID,
+        orders: [ORDER],
+        now: FIXED_NOW().toISOString(),
+        scopeKey: orchestratorToolScope('', env.grants.list('ada')),
+        approvalToken: 'host-token',
+        approvalCallId: 'call-1',
+        toolInput,
+      },
+      env.authority,
+    );
+    expect(otherSession).toEqual({ reason: 'approval-required' });
     const sealed = sealWorkOrders(
       env.ledger,
       {
@@ -449,6 +532,7 @@ describe('durable super-agent ledger', () => {
         now: FIXED_NOW().toISOString(),
         scopeKey: orchestratorToolScope('', env.grants.list('ada')),
         approvalToken: 'host-token',
+        approvalCallId: 'call-1',
         toolInput,
       },
       env.authority,
@@ -463,7 +547,8 @@ describe('durable super-agent ledger', () => {
         orders: [ORDER],
         now: FIXED_NOW().toISOString(),
         scopeKey: orchestratorToolScope('', env.grants.list('ada')),
-        approvalToken: 'model-token',
+        approvalToken: 'host-token',
+        approvalCallId: 'call-1',
         toolInput,
       },
       env.authority,

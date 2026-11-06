@@ -1487,7 +1487,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
       defineTool({
         name: 'super_agent_seal',
         description:
-          'Store explicit work orders for this session, Bot and Grant. Does not read private memory or schedule a model.',
+          'Store explicit work orders for this session, Bot and Grant after a Human approval of this exact call. A message that merely contains the words is not approval. Does not read private memory or schedule a model.',
         parameters: {
           grant_id: { type: 'string', required: true, description: 'Active Workspace Grant id.' },
           work_orders: {
@@ -1495,11 +1495,6 @@ class DshBotAgentAdapter implements BotAgentAdapter {
             required: true,
             description:
               'JSON array of {goal, steps, acceptance}. Model-written text needs a Human approval or an exact saved rule. Authorization flags are refused.',
-          },
-          source_event_id: {
-            type: 'string',
-            description:
-              'Human message id. Every goal, step and acceptance must already be in that message.',
           },
         },
         output: {
@@ -1524,14 +1519,12 @@ class DshBotAgentAdapter implements BotAgentAdapter {
               grantId: args.grant_id,
               orders: args.work_orders,
               now: new Date().toISOString(),
-              ...(args.source_event_id === undefined
-                ? {}
-                : { sourceEventId: args.source_event_id }),
               scopeKey: orchestratorToolScope(
                 context.agent?.session.header.cwd ?? '',
                 active.run.assignments.grants(),
               ),
               approvalToken: String(context.token),
+              approvalCallId: String(context.callId),
               toolInput,
             },
             active.run.workOrderAuthority,

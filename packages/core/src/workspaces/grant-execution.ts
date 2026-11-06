@@ -391,13 +391,7 @@ export function requiresHumanToolApproval(
       (args as Record<string, unknown>).access !== 'read'
     );
   if (name === 'secret_cli' || name === 'secret_mcp_connect' || name === 'bot_create') return true;
-  if (name === 'super_agent_seal') {
-    const source =
-      typeof args === 'object' && args !== null
-        ? (args as Record<string, unknown>).source_event_id
-        : undefined;
-    return typeof source !== 'string' || source.trim() === '';
-  }
+  if (name === 'super_agent_seal') return true;
   return isDshGovernedTool(name) && requiresHumanDecision(policyInput(args), templateInUse);
 }
 
