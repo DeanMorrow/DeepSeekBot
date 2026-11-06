@@ -1,5 +1,4 @@
 import type { OperationalDatabaseModulePort } from '../database/owner.js';
-// No concept-art plugin file exists in this checkout. Host apply() does not call this module.
 import { inspectImage, type ImageMime } from '../media/image-format.js';
 import type { SessionOwnership } from '../sessions/ownership.js';
 import type { StoredArtifact } from './shared-route.js';
@@ -196,7 +195,8 @@ export function createConceptArtConsumer(input: {
       if ('status' in bound) throw Object.assign(new Error(bound.status), bound);
       return wrapped.cancel(bound.projectId, idempotencyKey);
     },
-    accept(task: RouteTask, fingerprint: string, limits: ConceptArtLimits | null) {
+    accept(task: RouteTask, fingerprint: string) {
+      const limits = input.limits;
       const verdict = {
         accept: false,
         staleProviderError: task.error,
@@ -206,8 +206,8 @@ export function createConceptArtConsumer(input: {
       if (bound === undefined || bound.fingerprint !== fingerprint) {
         return { ...verdict, reason: 'FINGERPRINT_MISMATCH' };
       }
-      if (limits === null) return { ...verdict, reason: 'LIMITS_UNCONFIGURED' };
       if (task.localStop === true) return { ...verdict, reason: 'LOCAL_STOP' };
+      if (limits === null) return { ...verdict, reason: 'LIMITS_UNCONFIGURED' };
       if (task.status !== 'completed' || task.artifact === null)
         return { ...verdict, reason: 'NOT_COMPLETED' };
       if (task.artifact.kind === 'untrusted-url') return { ...verdict, reason: 'UNTRUSTED_URL' };

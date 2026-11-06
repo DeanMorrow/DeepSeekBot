@@ -101,11 +101,20 @@ describe('concept art consumer', () => {
     expect(opened.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.idempotencyKey).toBe(none.input.route_idempotency_key);
-    expect(
-      consumer.accept(opened.task!, String(none.input.input_fingerprint), TEST_LIMITS),
-    ).toMatchObject({
+    expect(consumer.accept(opened.task!, String(none.input.input_fingerprint))).toMatchObject({
       accept: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
+      mediaVerified: false,
+    });
+    const unconfigured = createConceptArtConsumer({
+      database: env.database,
+      ownership: env.ownership,
+      route: env.route,
+      limits: null,
+    });
+    expect(unconfigured.accept(opened.task!, String(none.input.input_fingerprint))).toMatchObject({
+      accept: false,
+      reason: 'LIMITS_UNCONFIGURED',
       mediaVerified: false,
     });
     expect(JSON.stringify(opened)).not.toContain('sk-test-secret');
@@ -172,7 +181,7 @@ describe('concept art consumer', () => {
     for (const id of ['F_BLOCK_CONFLICT', 'F_EMPTY_RAW', 'F_REF_LOCAL_BUT_ROUTE_PROMPT_ONLY']) {
       const item = caseById(id);
       driven.add(item.id);
-      const verdict = await consumer.request({
+      const blockedByFlag = await consumer.request({
         ...(item.input as object),
         sessionId: 'fixture-ctx-1',
         submit_prompt: '',
@@ -182,9 +191,36 @@ describe('concept art consumer', () => {
         operation_id: id,
         context_version: 1,
       } as never);
-      expect(verdict.submitCalls).toBe(0);
-      expect(verdict.reasons).toEqual(expect.arrayContaining(item.expected.reasons as string[]));
+      expect(blockedByFlag.submitCalls).toBe(0);
+      expect(blockedByFlag.reasons).toEqual(
+        expect.arrayContaining(item.expected.reasons as string[]),
+      );
+      const blockedByReason = await consumer.request({
+        ...(item.input as object),
+        sessionId: 'fixture-ctx-1',
+        submit_prompt: 'a prompt that would otherwise be allowed',
+        submit_allowed: true,
+        input_fingerprint: `${id}-allowed`,
+        route_idempotency_key: `${id}-allowed`,
+        operation_id: `${id}-allowed`,
+        context_version: 1,
+      } as never);
+      expect(blockedByReason).toMatchObject({ status: 'BLOCKED', submitCalls: 0 });
+      expect(blockedByReason.reasons).toEqual(item.expected.reasons);
     }
+    const shield = await consumer.request({
+      raw_requirement: '透明护罩加不透明底座，正面，不要多视图。',
+      submit_prompt: 'A clear shield over an opaque base, front view, no multi-view.',
+      style: { state: 'none' },
+      sessionId: 'fixture-ctx-1',
+      context_version: 1,
+      operation_id: 'op-shield-1',
+      route_idempotency_key: 'op-shield-1',
+      input_fingerprint: 'fp-shield',
+      submit_allowed: true,
+    });
+    expect(shield.reasons).not.toContain('CONFLICT_transparent_vs_opaque');
+    expect(shield).toMatchObject({ status: 'ALLOWED', submitCalls: 1 });
 
     driven.add('F_MISSING_HOST_CONTEXT');
     const missing = await consumer.request({
@@ -213,7 +249,7 @@ describe('concept art consumer', () => {
       submit_allowed: true,
     } as never);
     expect(again.idempotencyKey).toBe('op-t1-1');
-    expect(env.posts()).toBe(5);
+    expect(env.posts()).toBe(6);
 
     const fresh = caseById('F_EXPLICIT_NEW_GENERATION');
     driven.add(fresh.id);
@@ -226,7 +262,7 @@ describe('concept art consumer', () => {
         } as never)
       ).idempotencyKey,
     ).toBe('op-t1-2');
-    expect(env.posts()).toBe(6);
+    expect(env.posts()).toBe(7);
 
     const idem = caseById('F_IDEM_DIFF_PAYLOAD_REJECT');
     driven.add(idem.id);
@@ -278,12 +314,12 @@ describe('concept art consumer', () => {
     const stopped = consumer.cancel('fixture-ctx-1', 'op-t1-1');
     expect(stopped.localStop).toBe(true);
     const late = await consumer.resume('fixture-ctx-1', 'op-t1-1');
-    expect(consumer.accept(late, 'fp-t1-v1', TEST_LIMITS)).toMatchObject({
+    expect(consumer.accept(late, 'fp-t1-v1')).toMatchObject({
       accept: false,
       reason: 'LOCAL_STOP',
     });
     expect(cancelLate.expected.accept_as_image).toBe(false);
-    expect(env.posts()).toBe(6);
+    expect(env.posts()).toBe(7);
 
     const badB64 = caseById('F_BAD_BASE64');
     const jsonB64 = caseById('F_JSON_AS_B64');
@@ -353,7 +389,7 @@ describe('concept art consumer', () => {
         )
       ).error,
     ).toBe('empty-artifact');
-    expect(consumer.accept(bad, 'fp-t1-v1', TEST_LIMITS).accept).toBe(false);
+    expect(consumer.accept(bad, 'fp-t1-v1').accept).toBe(false);
     const boundMedia = {
       projectId: 'session:fixture-ctx-1',
       idempotencyKey: 'op-t1-1',
@@ -373,7 +409,6 @@ describe('concept art consumer', () => {
           },
         },
         'fp-t1-v1',
-        TEST_LIMITS,
       ).reason,
     ).toBe(badB64.expected.fail_stage);
     expect(
@@ -387,7 +422,6 @@ describe('concept art consumer', () => {
           },
         },
         'fp-t1-v1',
-        TEST_LIMITS,
       ).reason,
     ).toBe(jsonB64.expected.reason);
     expect(
@@ -401,7 +435,6 @@ describe('concept art consumer', () => {
           },
         },
         'fp-t1-v1',
-        TEST_LIMITS,
       ).reason,
     ).toBe(truncated.expected.reason);
     expect(
@@ -415,14 +448,12 @@ describe('concept art consumer', () => {
           },
         },
         'fp-t1-v1',
-        TEST_LIMITS,
       ).reason,
     ).toBe('UNTRUSTED_URL');
     expect(
       consumer.accept(
         { ...boundMedia, status: 'failed', error: 'empty-artifact', artifact: null },
         'fp-t1-v1',
-        TEST_LIMITS,
       ).accept,
     ).toBe(false);
     expect(
@@ -438,17 +469,15 @@ describe('concept art consumer', () => {
           },
         },
         'fp-t1-v1',
-        TEST_LIMITS,
       ),
     ).toMatchObject({
       accept: false,
       reason: 'UNTRUSTED_URL',
       staleProviderError: residual.input.error,
     });
-    expect(consumer.accept(opened.task!, 'not-the-stored-snapshot', TEST_LIMITS).reason).toBe(
+    expect(consumer.accept(opened.task!, 'not-the-stored-snapshot').reason).toBe(
       'FINGERPRINT_MISMATCH',
     );
-    expect(consumer.accept(late, 'fp-t1-v1', null).reason).toBe('LIMITS_UNCONFIGURED');
     expect(driven).toEqual(new Set(FIXTURES.cases.map((item) => item.id)));
   });
 });

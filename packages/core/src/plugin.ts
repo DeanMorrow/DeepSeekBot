@@ -202,6 +202,9 @@ import {
 } from './bots/bot-descriptor-sync.js';
 import { createModelPresetStore, type ModelPresetStore } from './models/presets.js';
 import { createModelCatalog } from './models/catalog.js';
+import { createConceptArtConsumer } from './models/concept-art-consumer.js';
+import { createCredentialSecretStore } from './models/credential-secret-store.js';
+import { createSharedModelRoute } from './models/shared-route.js';
 import { createCredentialReadiness } from './models/credential-readiness.js';
 import { createProviderCredentialHealth } from './models/credential-health.js';
 import { createModelRouteReadiness } from './models/readiness.js';
@@ -550,6 +553,8 @@ export interface BotHarnessCore {
   externalMessaging: OutboundMessaging;
   cloudConnections?: CloudConnections;
   voiceProviders: VoiceProviders;
+  sharedRoute: ReturnType<typeof createSharedModelRoute>;
+  conceptArt: ReturnType<typeof createConceptArtConsumer>;
   voiceMessages: VoiceMessages;
   voiceSpeech: { speak?: Parameters<typeof createVoiceMessages>[0]['speak'] };
   voiceZoom: { zoom?: VoiceCalls['zoom'] | undefined };
@@ -649,6 +654,7 @@ export function createCore(
       | undefined;
     voiceLog?: (phase: string, fields: Record<string, string | number>) => void;
     voiceFetch?: typeof fetch;
+    sharedRouteFetch?: typeof fetch;
   } = {},
 ): BotHarnessCore {
   const dshHome = options.dshHome ?? resolveDshHome();
@@ -1104,6 +1110,17 @@ export function createCore(
     registry,
     ownership,
   });
+  const sharedRoute = createSharedModelRoute(
+    attachOperationalModule(operationalDatabase, 'shared-model'),
+    createCredentialSecretStore(options.credentials ?? (() => undefined)),
+    options.sharedRouteFetch === undefined ? {} : { fetch: options.sharedRouteFetch },
+  );
+  const conceptArt = createConceptArtConsumer({
+    database: attachOperationalModule(operationalDatabase, 'concept-art'),
+    ownership,
+    route: sharedRoute,
+    limits: null,
+  });
   const voiceProviders = new VoiceProviders({
     database: attachOperationalModule(operationalDatabase, 'voice'),
     credentials: options.credentials ?? (() => undefined),
@@ -1251,6 +1268,8 @@ export function createCore(
   if (operationalDatabase.mode === 'ready') schedules.start();
   return {
     voiceProviders,
+    sharedRoute,
+    conceptArt,
     voiceMessages,
     voiceSpeech,
     voiceZoom,
