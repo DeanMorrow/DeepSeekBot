@@ -1,16 +1,31 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { resolveContained } from './host-pack.js';
 
 export const OPS_CATALOG_SOURCE = 'ops:asset-catalog' as const;
 
-export type CatalogCaller = { kind: 'profile-owner' } | { kind: 'bot'; slug: string };
+/** Host-built attestation. Request JSON cannot construct this. */
+export type CatalogAttestation =
+  | { source: 'host-session'; sessionOwnerId: string }
+  | { source: 'host-bot'; slug: string; ownerId: string; sessionOwnerId: string };
+
+interface CatalogBinding {
+  catalogOwner: string;
+  approvalOwner: string;
+  privacySha256?: string;
+  contractSha256?: string;
+  contractVersion?: string;
+  contractPointer?: string;
+  allowRoots: string[];
+}
 
 export interface CatalogInventoryView {
   id: string;
   brief: string | null;
+  name: string | null;
+  purpose: string | null;
   sourceRef: typeof OPS_CATALOG_SOURCE;
   entryRef: string | null;
   version: number | string | null;
@@ -41,8 +56,19 @@ export interface CatalogOpenView {
   items: Array<{ id: string; name: string; brief: string }>;
 }
 
-function callerLabel(caller: CatalogCaller): CatalogSourceView['caller'] {
-  return caller.kind === 'profile-owner' ? 'profile-owner' : `bot:${caller.slug}`;
+function callerLabel(caller: CatalogAttestation): CatalogSourceView['caller'] {
+  return caller.source === 'host-session' ? 'profile-owner' : `bot:${caller.slug}`;
+}
+
+function boundOwner(binding: CatalogBinding, caller: CatalogAttestation): boolean {
+  if (binding.catalogOwner === '' || binding.approvalOwner === '') return false;
+  if (binding.catalogOwner !== binding.approvalOwner) return false;
+  if (caller.sessionOwnerId !== binding.catalogOwner) return false;
+  if (caller.source === 'host-session') return true;
+  if (caller.source === 'host-bot') {
+    return caller.ownerId === caller.sessionOwnerId && caller.slug !== '';
+  }
+  return false;
 }
 
 function fingerprint(value: unknown): string {
@@ -90,7 +116,7 @@ function cleanText(value: unknown, limit: number): string | undefined {
 }
 
 function empty(
-  caller: CatalogCaller,
+  caller: CatalogAttestation,
   status: CatalogSourceView['status'],
   authorizationGaps: CatalogSourceView['authorizationGaps'] = [],
 ): CatalogSourceView {
@@ -225,6 +251,7 @@ const ROOT_FIELDS = new Set([
 function knownAudience(value: unknown): value is string {
   return (
     value === 'profile-owner' ||
+    value === 'owner-bots' ||
     (typeof value === 'string' && /^bot:[a-z0-9][a-z0-9-]{0,63}$/.test(value))
   );
 }
@@ -237,8 +264,13 @@ function audienceNames(value: unknown): string[] | 'absent' | 'deny' {
   return value;
 }
 
-function callerAudience(caller: CatalogCaller): string {
-  return caller.kind === 'profile-owner' ? 'profile-owner' : `bot:${caller.slug}`;
+function callerAudience(caller: CatalogAttestation): string {
+  return caller.source === 'host-session' ? 'profile-owner' : `bot:${caller.slug}`;
+}
+
+function audienceMatches(audiences: readonly string[], caller: CatalogAttestation): boolean {
+  if (audiences.includes(callerAudience(caller))) return true;
+  return caller.source === 'host-bot' && audiences.includes('owner-bots');
 }
 
 function layerAudiences(record: Record<string, unknown>): string[] | 'inherit' | 'deny' {
@@ -268,14 +300,14 @@ function layerAudiences(record: Record<string, unknown>): string[] | 'inherit' |
 function admits(
   record: Record<string, unknown>,
   known: Set<string>,
-  caller: CatalogCaller,
+  caller: CatalogAttestation,
 ): boolean {
   if (Object.keys(record).some((key) => !key.startsWith('machine_') && !known.has(key)))
     return false;
   const layer = layerAudiences(record);
   if (layer === 'deny') return false;
   if (layer === 'inherit') return true;
-  return layer.includes(callerAudience(caller));
+  return audienceMatches(layer, caller);
 }
 
 function authorizationGaps(
@@ -289,20 +321,43 @@ function authorizationGaps(
   return gaps;
 }
 
-function allowed(display: unknown, caller: CatalogCaller): boolean {
+function allowed(display: unknown, caller: CatalogAttestation): boolean {
   if (typeof display !== 'object' || display === null || Array.isArray(display)) return false;
   const record = display as Record<string, unknown>;
   if (Object.keys(record).some((key) => key !== 'audiences')) return false;
   const audiences = audienceNames(record.audiences);
   if (audiences === 'absent' || audiences === 'deny') return false;
-  return audiences.includes(callerAudience(caller));
+  return audienceMatches(audiences, caller);
 }
 
 function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, 'utf8')) as unknown;
 }
 
-function containedFile(root: string, relative: string): string | undefined {
+function resolveAllowed(target: string, allowRoots: readonly string[]): string | undefined {
+  if (target.includes('\0') || allowRoots.length === 0) return undefined;
+  try {
+    if (!existsSync(target) || lstatSync(target).isSymbolicLink()) return undefined;
+    const real = realpathSync(target);
+    for (const root of allowRoots) {
+      if (lstatSync(root).isSymbolicLink()) continue;
+      const rootReal = realpathSync(root);
+      const rel = relative(rootReal, real);
+      if (rel !== '' && (rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel))) continue;
+      return real;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function containedFile(
+  root: string,
+  relative: string,
+  allowRoots: readonly string[] = [],
+): string | undefined {
+  if (isAbsolute(relative)) return resolveAllowed(relative, allowRoots);
   const decoded = decodePathEncodings(relative);
   if (
     decoded !== relative &&
@@ -328,6 +383,8 @@ function containedFile(root: string, relative: string): string | undefined {
 interface RegistryInventory {
   id: string;
   brief: string | null;
+  name: string | null;
+  purpose: string | null;
   briefRejected: boolean;
   version: number | string | null;
   updatedAt: string | null;
@@ -374,9 +431,12 @@ function inventoriesOf(value: unknown): RegistryInventory[] | undefined {
     const conflict = ownEntry !== null && categoryEntry !== null && ownEntry !== categoryEntry;
     const rawBrief = typeof record.brief === 'string' ? record.brief : undefined;
     const brief = cleanText(record.brief, 160) ?? cleanText(record.name, 80) ?? null;
+    const purpose = cleanText(record.purpose, 160) ?? brief;
     parsed.push({
       id: record.id,
       brief: conflict ? null : brief,
+      name: conflict ? null : (cleanText(record.name, 80) ?? null),
+      purpose: conflict ? null : purpose,
       briefRejected:
         conflict ||
         (rawBrief !== undefined &&
@@ -402,6 +462,8 @@ function loadRegistry(configPath: string):
       updatedAt: string | null;
       display: unknown;
       authorizationGaps: CatalogSourceView['authorizationGaps'];
+      binding: CatalogBinding;
+      record: Record<string, unknown>;
       inventories: RegistryInventory[];
     } {
   if (!existsSync(configPath)) return { status: 'unreachable' };
@@ -438,6 +500,26 @@ function loadRegistry(configPath: string):
     return { status: 'invalid' };
   }
   if (typeof registry !== 'object' || registry === null) return { status: 'invalid' };
+  const configRecord = config as Record<string, unknown>;
+  const binding: CatalogBinding = {
+    catalogOwner: typeof configRecord.catalogOwner === 'string' ? configRecord.catalogOwner : '',
+    approvalOwner: typeof configRecord.approvalOwner === 'string' ? configRecord.approvalOwner : '',
+    ...(typeof configRecord.privacySha256 === 'string'
+      ? { privacySha256: configRecord.privacySha256 }
+      : {}),
+    ...(typeof configRecord.contractSha256 === 'string'
+      ? { contractSha256: configRecord.contractSha256 }
+      : {}),
+    ...(typeof configRecord.contractVersion === 'string'
+      ? { contractVersion: configRecord.contractVersion }
+      : {}),
+    ...(typeof configRecord.contractPointer === 'string'
+      ? { contractPointer: configRecord.contractPointer }
+      : {}),
+    allowRoots: Array.isArray(configRecord.allowRoots)
+      ? configRecord.allowRoots.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
   const body = registry as Record<string, unknown>;
   if (body.sourceRef !== undefined && body.sourceRef !== OPS_CATALOG_SOURCE)
     return { status: 'invalid' };
@@ -452,13 +534,47 @@ function loadRegistry(configPath: string):
     updatedAt: readTime(body),
     display: body.display,
     authorizationGaps: authorizationGaps(body),
+    binding,
+    record: body,
     inventories,
   };
 }
 
-function entryFileAdmits(root: string, entry: string | null, caller: CatalogCaller): boolean {
+export const CATALOG_SECTION_7 =
+  'CONTRACT §7: private inventory names and paths must not be projected; do not scan other Bot private stores.';
+
+function sha256Text(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function legacyAllows(record: Record<string, unknown>, binding: CatalogBinding): boolean {
+  const hasPrivacy = 'privacy' in record;
+  const hasContract = 'contract' in record || 'contract_version' in record;
+  if (!hasPrivacy && !hasContract) return true;
+  if (hasPrivacy && typeof record.privacy !== 'string') return false;
+  if ('contract' in record && typeof record.contract !== 'string') return false;
+  if ('contract_version' in record && typeof record.contract_version !== 'string') return false;
+  if (typeof record.privacy === 'string' && binding.privacySha256 !== sha256Text(record.privacy)) {
+    return false;
+  }
+  if (typeof record.contract === 'string') {
+    if (binding.contractVersion !== record.contract_version) return false;
+    if (binding.contractSha256 !== sha256Text(CATALOG_SECTION_7)) return false;
+    if (record.contract.startsWith('synthetic://'))
+      return binding.contractPointer === record.contract;
+    return false;
+  }
+  return !hasContract;
+}
+
+function entryFileAdmits(
+  root: string,
+  entry: string | null,
+  caller: CatalogAttestation,
+  allowRoots: readonly string[],
+): boolean {
   if (entry === null) return true;
-  const file = containedFile(root, entry);
+  const file = containedFile(root, entry, allowRoots);
   if (file === undefined) return true;
   try {
     const parsed = readJson(file);
@@ -469,10 +585,16 @@ function entryFileAdmits(root: string, entry: string | null, caller: CatalogCall
   }
 }
 
-function categoryView(root: string, row: RegistryInventory): CatalogInventoryView {
+function categoryView(
+  root: string,
+  row: RegistryInventory,
+  allowRoots: readonly string[],
+): CatalogInventoryView {
   const base = {
     id: row.id,
     brief: row.brief,
+    name: row.name,
+    purpose: row.purpose,
     sourceRef: OPS_CATALOG_SOURCE,
     version: row.version,
     updatedAt: row.updatedAt,
@@ -483,7 +605,7 @@ function categoryView(root: string, row: RegistryInventory): CatalogInventoryVie
   if (row.status === 'unpopulated' || row.entry === null) {
     return { ...base, entryRef: null, status: 'unpopulated' };
   }
-  const file = containedFile(root, row.entry);
+  const file = containedFile(root, row.entry, allowRoots);
   if (file === undefined) return { ...base, entryRef: null, status: 'unreachable' };
   let parsed: unknown;
   try {
@@ -506,18 +628,32 @@ function categoryView(root: string, row: RegistryInventory): CatalogInventoryVie
   };
 }
 
+export function configuredCatalogOwner(configPath: string | undefined): string {
+  if (configPath === undefined || configPath.trim() === '' || !existsSync(configPath)) return '';
+  try {
+    if (lstatSync(configPath).isSymbolicLink()) return '';
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as { catalogOwner?: unknown };
+    return typeof parsed.catalogOwner === 'string' ? parsed.catalogOwner : '';
+  } catch {
+    return '';
+  }
+}
+
 export function readAuthorizedOpsCatalog(
   configPath: string | undefined,
-  caller: CatalogCaller,
+  caller: CatalogAttestation,
 ): CatalogSourceView {
   if (configPath === undefined || configPath.trim() === '') return empty(caller, 'unreachable');
   const loaded = loadRegistry(configPath);
   if (loaded.status !== 'ready') return empty(caller, loaded.status);
-  if (!allowed(loaded.display, caller))
-    return empty(caller, 'unauthorized', loaded.authorizationGaps);
+  if (!boundOwner(loaded.binding, caller) || !legacyAllows(loaded.record, loaded.binding)) {
+    return empty(caller, 'unauthorized', authorizationGaps(loaded.record));
+  }
+  if (!allowed(loaded.display, caller)) return empty(caller, 'unauthorized');
   const inventories = loaded.inventories.flatMap((row) =>
-    admits(row.record, CATEGORY_FIELDS, caller) && entryFileAdmits(loaded.root, row.entry, caller)
-      ? [categoryView(loaded.root, row)]
+    admits(row.record, CATEGORY_FIELDS, caller) &&
+    entryFileAdmits(loaded.root, row.entry, caller, loaded.binding.allowRoots)
+      ? [categoryView(loaded.root, row, loaded.binding.allowRoots)]
       : [],
   );
   const view = {
@@ -526,7 +662,7 @@ export function readAuthorizedOpsCatalog(
     status: 'active' as const,
     version: loaded.version,
     updatedAt: loaded.updatedAt,
-    authorizationGaps: loaded.authorizationGaps,
+    authorizationGaps: [],
     inventories,
   };
   return { ok: true, ...view, fingerprint: fingerprint(view) };
@@ -534,7 +670,7 @@ export function readAuthorizedOpsCatalog(
 
 export function openAuthorizedOpsEntry(
   configPath: string | undefined,
-  caller: CatalogCaller,
+  caller: CatalogAttestation,
   entryRef: string,
 ): CatalogOpenView {
   const refused = {
@@ -560,7 +696,7 @@ export function openAuthorizedOpsEntry(
     return { ...refused, reason: loaded.status, status: loaded.status };
   const source = loaded.inventories.find((item) => `${OPS_CATALOG_SOURCE}#${item.id}` === entryRef);
   if (source?.entry == null) return { ...refused, reason: 'unreachable', status: 'unreachable' };
-  const file = containedFile(loaded.root, source.entry);
+  const file = containedFile(loaded.root, source.entry, loaded.binding.allowRoots);
   if (file === undefined) return { ...refused, reason: 'unreachable', status: 'unreachable' };
   const parsed = readJson(file) as { items?: Array<Record<string, unknown>> };
   const items = (parsed.items ?? []).flatMap((item) => {

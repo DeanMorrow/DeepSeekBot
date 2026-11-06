@@ -27,9 +27,17 @@ writeFileSync(
 const config = join(root, 'catalog-source.json');
 writeFileSync(
   config,
-  JSON.stringify({ sourceRef: 'ops:asset-catalog', registryPath: 'official/registry.json' }),
+  JSON.stringify({
+    sourceRef: 'ops:asset-catalog',
+    registryPath: 'official/registry.json',
+    catalogOwner: 'owner-a',
+    approvalOwner: 'owner-a',
+  }),
 );
-const view = readAuthorizedOpsCatalog(config, { kind: 'profile-owner' });
+const view = readAuthorizedOpsCatalog(config, {
+  source: 'host-session',
+  sessionOwnerId: 'owner-a',
+});
 const briefs = view.inventories.map((item) => item.brief);
 if (!briefs.includes('UI/UX patterns') || !briefs.includes('a/b ratio')) {
   console.error('export check failed: ordinary slashes were rejected');
@@ -39,7 +47,10 @@ if (JSON.stringify(view).includes('/etc/passwd')) {
   console.error('export check failed: absolute path was returned');
   process.exit(1);
 }
-const closed = readAuthorizedOpsCatalog(undefined, { kind: 'profile-owner' });
+const closed = readAuthorizedOpsCatalog(undefined, {
+  source: 'host-session',
+  sessionOwnerId: 'owner-a',
+});
 if (closed.status !== 'unreachable') {
   console.error('export check failed: missing source must stay unreachable');
   process.exit(1);

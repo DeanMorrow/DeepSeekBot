@@ -1,6 +1,10 @@
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools';
 
-import { OPS_CATALOG_SOURCE, readAuthorizedOpsCatalog } from './catalog-source.js';
+import {
+  configuredCatalogOwner,
+  OPS_CATALOG_SOURCE,
+  readAuthorizedOpsCatalog,
+} from './catalog-source.js';
 import {
   migratePack,
   privateAdd,
@@ -165,9 +169,13 @@ export function createPackTools(botSlug: string, host: PackToolHost): ToolDefini
         text(
           authorizedCatalogView(memory(), botSlug, { actor: args.actor }, (sourceRef, slug) => {
             if (sourceRef !== OPS_CATALOG_SOURCE) return undefined;
-            const view = readAuthorizedOpsCatalog(host.catalogSourcePath?.(), {
-              kind: 'bot',
+            const sourcePath = host.catalogSourcePath?.();
+            const ownerId = configuredCatalogOwner(sourcePath);
+            const view = readAuthorizedOpsCatalog(sourcePath, {
+              source: 'host-bot',
               slug,
+              ownerId,
+              sessionOwnerId: ownerId,
             });
             if (view.status === 'unreachable') return undefined;
             return {

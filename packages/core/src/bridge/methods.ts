@@ -3,7 +3,11 @@ import type { VoiceProviders } from '../voice/providers.js';
 import { networkBotId, type BotContact } from '../runtime/bot-contact-discovery.js';
 import { BotNetworkDeliveryError } from '../runtime/bot-network.js';
 import { join } from 'node:path';
-import { openAuthorizedOpsEntry, readAuthorizedOpsCatalog } from '../memory/catalog-source.js';
+import {
+  configuredCatalogOwner,
+  openAuthorizedOpsEntry,
+  readAuthorizedOpsCatalog,
+} from '../memory/catalog-source.js';
 import { createBotImports, type BotImportsService } from '../bots/imports.js';
 import { SessionRecoveryError } from '../runtime/session-recovery.js';
 import type { BotContextWindow } from '../runtime/context-window.js';
@@ -7979,7 +7983,10 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
       return {
         ok: true,
         value: {
-          catalog: readAuthorizedOpsCatalog(deps.catalogSourcePath, { kind: 'profile-owner' }),
+          catalog: readAuthorizedOpsCatalog(deps.catalogSourcePath, {
+            source: 'host-session',
+            sessionOwnerId: configuredCatalogOwner(deps.catalogSourcePath),
+          }),
         },
       };
     },
@@ -7993,7 +8000,10 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
         value: {
           catalog: openAuthorizedOpsEntry(
             deps.catalogSourcePath,
-            { kind: 'profile-owner' },
+            {
+              source: 'host-session',
+              sessionOwnerId: configuredCatalogOwner(deps.catalogSourcePath),
+            },
             entryRef.trim(),
           ),
         },

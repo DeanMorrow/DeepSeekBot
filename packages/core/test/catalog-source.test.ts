@@ -1,11 +1,23 @@
-import { mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { openAuthorizedOpsEntry, readAuthorizedOpsCatalog } from '../src/memory/catalog-source.js';
+import {
+  openAuthorizedOpsEntry,
+  readAuthorizedOpsCatalog,
+  type CatalogAttestation,
+} from '../src/memory/catalog-source.js';
 import { authorizedCatalogView } from '../src/memory/host-pack.js';
 import { createTempRoot } from './helpers.js';
+
+const OWNER = 'synthetic-owner';
+function attestOwner(sessionOwnerId = OWNER): CatalogAttestation {
+  return { source: 'host-session', sessionOwnerId };
+}
+function attestBot(slug: string, ownerId = OWNER): CatalogAttestation {
+  return { source: 'host-bot', slug, ownerId, sessionOwnerId: ownerId };
+}
 
 const REGISTRY = {
   schemaVersion: 1,
@@ -59,14 +71,19 @@ function writeRegistry(root: string, registry: unknown = REGISTRY) {
   const config = join(root, 'catalog-source.json');
   writeFileSync(
     config,
-    JSON.stringify({ sourceRef: 'ops:asset-catalog', registryPath: 'official/registry.json' }),
+    JSON.stringify({
+      sourceRef: 'ops:asset-catalog',
+      registryPath: 'official/registry.json',
+      catalogOwner: OWNER,
+      approvalOwner: OWNER,
+    }),
   );
   return config;
 }
 
 describe('authorized ops catalog source', () => {
   it('stays unreachable when no source is configured and does not read a bundled tree', () => {
-    const view = readAuthorizedOpsCatalog(undefined, { kind: 'profile-owner' });
+    const view = readAuthorizedOpsCatalog(undefined, attestOwner());
     expect(view.status).toBe('unreachable');
     expect(view.inventories).toEqual([]);
     expect(JSON.stringify(view)).not.toContain('skills');
@@ -80,7 +97,7 @@ describe('authorized ops catalog source', () => {
       status: 'active',
       display: undefined,
     });
-    const view = readAuthorizedOpsCatalog(config, { kind: 'profile-owner' });
+    const view = readAuthorizedOpsCatalog(config, attestOwner());
     expect(view.status).toBe('unauthorized');
     expect(view.inventories).toEqual([]);
     expect(JSON.stringify(view)).not.toContain('技能简介');
@@ -89,29 +106,23 @@ describe('authorized ops catalog source', () => {
   it('shows every authorized category to the profile owner and opens by entryRef', () => {
     const root = createTempRoot('catalog-source-');
     const config = writeRegistry(root);
-    const view = readAuthorizedOpsCatalog(config, { kind: 'profile-owner' });
+    const view = readAuthorizedOpsCatalog(config, attestOwner());
     expect(view.status).toBe('active');
     expect(view.inventories.map((item) => item.id)).toEqual(['skills', 'modules']);
     expect(view.inventories.every((item) => item.entryRef?.startsWith('ops:asset-catalog#'))).toBe(
       true,
     );
     expect(JSON.stringify(view)).not.toContain('official');
-    const opened = openAuthorizedOpsEntry(
-      config,
-      { kind: 'profile-owner' },
-      'ops:asset-catalog#modules',
-    );
+    const opened = openAuthorizedOpsEntry(config, attestOwner(), 'ops:asset-catalog#modules');
     expect(opened.items).toEqual([{ id: 'mod-a', name: 'Module A', brief: '一个模块' }]);
-    const again = readAuthorizedOpsCatalog(config, { kind: 'profile-owner' });
+    const again = readAuthorizedOpsCatalog(config, attestOwner());
     expect(again.fingerprint).toBe(view.fingerprint);
   });
 
   it('refuses another bot, a path leak, a symlink and a changed fingerprint', () => {
     const root = createTempRoot('catalog-source-');
     const config = writeRegistry(root);
-    expect(readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'bee' }).status).toBe(
-      'unauthorized',
-    );
+    expect(readAuthorizedOpsCatalog(config, attestBot('bee')).status).toBe('unauthorized');
     const leaked = writeRegistry(root, {
       ...REGISTRY,
       inventories: [
@@ -122,7 +133,7 @@ describe('authorized ops catalog source', () => {
         REGISTRY.inventories[1],
       ],
     });
-    const hidden = readAuthorizedOpsCatalog(leaked, { kind: 'profile-owner' });
+    const hidden = readAuthorizedOpsCatalog(leaked, attestOwner());
     expect(hidden.inventories[0]).toMatchObject({ status: 'invalid', brief: null, entryRef: null });
     expect(JSON.stringify(hidden)).not.toContain('/var/private');
     symlinkSync(join(root, 'official', 'skills.json'), join(root, 'official', 'linked.json'));
@@ -131,11 +142,11 @@ describe('authorized ops catalog source', () => {
       version: 3,
       inventories: [{ ...REGISTRY.inventories[0], entry: 'linked.json', version: 2 }],
     });
-    expect(readAuthorizedOpsCatalog(linked, { kind: 'profile-owner' }).inventories[0]?.status).toBe(
+    expect(readAuthorizedOpsCatalog(linked, attestOwner()).inventories[0]?.status).toBe(
       'unreachable',
     );
-    expect(readAuthorizedOpsCatalog(linked, { kind: 'profile-owner' }).fingerprint).not.toBe(
-      readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'ada' }).fingerprint,
+    expect(readAuthorizedOpsCatalog(linked, attestOwner()).fingerprint).not.toBe(
+      readAuthorizedOpsCatalog(config, attestBot('ada')).fingerprint,
     );
   });
 
@@ -164,7 +175,7 @@ describe('authorized ops catalog source', () => {
       }),
     );
     const ada = authorizedCatalogView(memory, 'ada', {}, (sourceRef, slug) => {
-      const view = readAuthorizedOpsCatalog(config, { kind: 'bot', slug });
+      const view = readAuthorizedOpsCatalog(config, attestBot(slug));
       if (sourceRef !== 'ops:asset-catalog' || view.status === 'unreachable') return undefined;
       return {
         status: view.status === 'active' ? 'active' : view.status,
@@ -181,7 +192,7 @@ describe('authorized ops catalog source', () => {
     const row = (ada.inventories as Array<{ briefs: unknown[]; status: string }>)[0];
     expect(row?.status).toBe('active');
     expect(row?.briefs).toHaveLength(2);
-    const bee = readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'bee' });
+    const bee = readAuthorizedOpsCatalog(config, attestBot('bee'));
     expect(bee.inventories).toEqual([]);
   });
 
@@ -227,7 +238,7 @@ describe('authorized ops catalog source', () => {
         })),
       ],
     });
-    const view = readAuthorizedOpsCatalog(config, { kind: 'profile-owner' });
+    const view = readAuthorizedOpsCatalog(config, attestOwner());
     expect(
       view.inventories.filter((item) => item.status === 'unpopulated').map((item) => item.brief),
     ).toEqual(samples.map(([, brief]) => brief));
@@ -249,26 +260,20 @@ describe('authorized ops catalog source', () => {
         { ...REGISTRY.inventories[0], id: 'skills', visibility: 'private' },
       ],
     });
-    expect(readAuthorizedOpsCatalog(config, { kind: 'profile-owner' }).status).toBe('invalid');
+    expect(readAuthorizedOpsCatalog(config, attestOwner()).status).toBe('invalid');
     const escaped = writeRegistry(root, {
       ...REGISTRY,
       inventories: [{ ...REGISTRY.inventories[0], entry: '%2e%2e%2fsecret.json' }],
     });
-    expect(
-      readAuthorizedOpsCatalog(escaped, { kind: 'profile-owner' }).inventories[0]?.status,
-    ).toBe('unreachable');
-    const live = writeRegistry(root);
-    expect(readAuthorizedOpsCatalog(live, { kind: 'profile-owner' }).inventories[0]?.status).toBe(
-      'active',
+    expect(readAuthorizedOpsCatalog(escaped, attestOwner()).inventories[0]?.status).toBe(
+      'unreachable',
     );
+    const live = writeRegistry(root);
+    expect(readAuthorizedOpsCatalog(live, attestOwner()).inventories[0]?.status).toBe('active');
     const skills = join(root, 'official', 'skills.json');
     unlinkSync(skills);
     symlinkSync(join(root, 'official', 'modules.json'), skills);
-    const opened = openAuthorizedOpsEntry(
-      live,
-      { kind: 'profile-owner' },
-      'ops:asset-catalog#skills',
-    );
+    const opened = openAuthorizedOpsEntry(live, attestOwner(), 'ops:asset-catalog#skills');
     expect(opened.status).toBe('unreachable');
     expect(opened.items).toEqual([]);
   });
@@ -323,33 +328,21 @@ describe('authorized ops catalog source', () => {
         ],
       }),
     );
-    const ada = readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'ada' });
+    const ada = readAuthorizedOpsCatalog(config, attestBot('ada'));
     expect(ada.inventories.map((item) => item.id)).toEqual(['skills', 'ada-only']);
     expect(JSON.stringify(ada)).not.toContain('私有分类标题');
     expect(JSON.stringify(ada)).not.toContain('未知覆盖');
-    const adaOpen = openAuthorizedOpsEntry(
-      config,
-      { kind: 'bot', slug: 'ada' },
-      'ops:asset-catalog#skills',
-    );
+    const adaOpen = openAuthorizedOpsEntry(config, attestBot('ada'), 'ops:asset-catalog#skills');
     expect(adaOpen.items.map((item) => item.id)).toEqual(['skill-a', 'ada-item']);
     expect(JSON.stringify(adaOpen)).not.toContain('私有标题');
     expect(JSON.stringify(adaOpen)).not.toContain('神秘标题');
-    const bee = readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'bee' });
+    const bee = readAuthorizedOpsCatalog(config, attestBot('bee'));
     expect(bee.inventories.map((item) => item.id)).toEqual(['skills']);
-    const beeOpen = openAuthorizedOpsEntry(
-      config,
-      { kind: 'bot', slug: 'bee' },
-      'ops:asset-catalog#skills',
-    );
+    const beeOpen = openAuthorizedOpsEntry(config, attestBot('bee'), 'ops:asset-catalog#skills');
     expect(beeOpen.items.map((item) => item.id)).toEqual(['skill-a']);
-    const owner = readAuthorizedOpsCatalog(config, { kind: 'profile-owner' });
+    const owner = readAuthorizedOpsCatalog(config, attestOwner());
     expect(owner.inventories.map((item) => item.id)).toEqual(['skills']);
-    const ownerOpen = openAuthorizedOpsEntry(
-      config,
-      { kind: 'profile-owner' },
-      'ops:asset-catalog#skills',
-    );
+    const ownerOpen = openAuthorizedOpsEntry(config, attestOwner(), 'ops:asset-catalog#skills');
     expect(ownerOpen.items.map((item) => item.id)).toEqual(['skill-a']);
     writeFileSync(
       join(root, 'official', 'skills.json'),
@@ -360,14 +353,10 @@ describe('authorized ops catalog source', () => {
         items: [{ id: 'skill-a', name: 'Skill A', brief: '一项技能' }],
       }),
     );
-    const hiddenFile = readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'ada' });
+    const hiddenFile = readAuthorizedOpsCatalog(config, attestBot('ada'));
     expect(hiddenFile.inventories.map((item) => item.id)).toEqual(['ada-only']);
     expect(JSON.stringify(hiddenFile)).not.toContain('技能简介');
-    const hiddenOpen = openAuthorizedOpsEntry(
-      config,
-      { kind: 'bot', slug: 'ada' },
-      'ops:asset-catalog#skills',
-    );
+    const hiddenOpen = openAuthorizedOpsEntry(config, attestBot('ada'), 'ops:asset-catalog#skills');
     expect(hiddenOpen.status).toBe('unauthorized');
     expect(hiddenOpen.items).toEqual([]);
     expect(JSON.stringify(hiddenOpen)).not.toContain('一项技能');
@@ -375,58 +364,24 @@ describe('authorized ops catalog source', () => {
       ...REGISTRY,
       display: { audiences: ['profile-owner'] },
     });
-    expect(readAuthorizedOpsCatalog(ownerOnly, { kind: 'bot', slug: 'ada' }).status).toBe(
-      'unauthorized',
-    );
-    expect(readAuthorizedOpsCatalog(ownerOnly, { kind: 'profile-owner' }).status).toBe('active');
+    expect(readAuthorizedOpsCatalog(ownerOnly, attestBot('ada')).status).toBe('unauthorized');
+    expect(readAuthorizedOpsCatalog(ownerOnly, attestOwner()).status).toBe('active');
   });
 
-  it('reads an authorized synthetic real-shaped catalog without projecting machine fields', () => {
-    const config = join(
-      import.meta.dirname,
-      'fixtures/n6-synthetic/fixtures/isomorphic-real-shape/catalog-source.json',
-    );
-    const owner = { kind: 'profile-owner' as const };
-    const view = readAuthorizedOpsCatalog(config, owner);
-    expect(view.status).toBe('active');
-    expect(view.version).toBe('9.9.9-synthetic');
-    expect(view.updatedAt).toBe('2026-11-06T00:00:00.000Z');
-    expect(view.authorizationGaps.map((gap) => gap.field).sort()).toEqual(['contract', 'privacy']);
-    expect(view.inventories.map((item) => item.id)).toEqual(['syn-cat-alpha', 'syn-cat-beta']);
-    expect(view.inventories.map((item) => item.brief)).toEqual([
-      'SYNTHETIC brief alpha UI/UX style slash ok',
-      'SYNTHETIC brief beta a/b ratio style',
-    ]);
-    const opened = openAuthorizedOpsEntry(config, owner, 'ops:asset-catalog#syn-cat-alpha');
-    expect(opened.ok).toBe(true);
-    expect(opened.items.map((item) => item.id)).toEqual(['syn-item-001', 'syn-item-002']);
-    const projected = JSON.stringify({ view, opened });
-    expect(projected).not.toContain('machine_');
-    expect(projected).not.toContain('synthetic://');
-    expect(projected).not.toContain('SYNTHETIC should be hidden');
-    expect(readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'ada' }).status).toBe(
-      'unauthorized',
-    );
-    const stripped = JSON.parse(
-      readFileSync(
-        join(
-          import.meta.dirname,
-          'fixtures/n6-synthetic/fixtures/isomorphic-real-shape/registry.json',
-        ),
-        'utf8',
-      ),
-    ) as Record<string, unknown>;
-    delete stripped.display;
-    const root = createTempRoot('catalog-no-display-');
-    mkdirSync(join(root, 'official'), { recursive: true });
-    writeFileSync(join(root, 'official', 'registry.json'), JSON.stringify(stripped));
-    writeFileSync(
-      join(root, 'catalog-source.json'),
-      JSON.stringify({ sourceRef: 'ops:asset-catalog', registryPath: 'official/registry.json' }),
-    );
-    const hidden = readAuthorizedOpsCatalog(join(root, 'catalog-source.json'), owner);
-    expect(hidden.status).toBe('unauthorized');
-    expect(hidden.inventories).toEqual([]);
-    expect(JSON.stringify(hidden)).not.toContain('SYNTHETIC brief');
+  it('does not keep an object privacy field active just because gaps were recorded', () => {
+    const root = createTempRoot('catalog-privacy-object-');
+    const config = writeRegistry(root, {
+      ...REGISTRY,
+      privacy: { mode: 'synthetic-privacy-mode' },
+      contract: { id: 'synthetic-contract-id' },
+    });
+    const view = readAuthorizedOpsCatalog(config, attestOwner());
+    expect(view.status).toBe('unauthorized');
+    expect(view.inventories).toEqual([]);
+    expect(view.authorizationGaps.map((gap) => gap.field)).toEqual(['privacy', 'contract']);
+    expect(JSON.stringify(view)).not.toContain('技能简介');
+    const opened = openAuthorizedOpsEntry(config, attestOwner(), 'ops:asset-catalog#skills');
+    expect(opened.ok).toBe(false);
+    expect(opened.items).toEqual([]);
   });
 });
