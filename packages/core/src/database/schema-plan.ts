@@ -2904,6 +2904,25 @@ const SUPER_AGENT_RUN_MIGRATION: SchemaMigration = {
   },
 };
 
+const CONCEPT_ART_OPERATION_MIGRATION: SchemaMigration = {
+  generation: 134,
+  module: 'concept-art',
+  description: 'Remember concept-art operation fingerprints without a user project',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE concept_art_operations (
+        session_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        context_version TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        PRIMARY KEY (session_id, idempotency_key)
+      );
+    `);
+  },
+};
+
 const SHARED_MODEL_MIGRATION: SchemaMigration = {
   generation: 133,
   module: 'shared-model',
@@ -3274,4 +3293,5 @@ export const BOT_HARNESS_SCHEMA_PLAN = defineSchemaPlan([
   SUPER_AGENT_RUN_MIGRATION,
   SUPER_AGENT_SOURCE_MIGRATION,
   SHARED_MODEL_MIGRATION,
+  CONCEPT_ART_OPERATION_MIGRATION,
 ]);
