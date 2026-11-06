@@ -1344,8 +1344,44 @@ export class BotharnessBridgeService extends TypertRemoteService {
     return unwrap(this.methods.voiceProviders(slug === undefined ? {} : { slug }));
   }
 
-  conceptArt(payload: Record<string, unknown>): Promise<unknown> {
-    return unwrapAsync(this.methods.conceptArt(payload));
+  conceptArt(
+    action: 'status' | 'styles' | 'generateStyle' | 'request' | 'resume' | 'cancel' | 'accept',
+    sessionId?: string | null,
+    styleRef?: string,
+    note?: string,
+    idempotencyKey?: string,
+    contextVersion?: string | number,
+    request?: {
+      raw_requirement: string;
+      submit_prompt?: string;
+      style: {
+        state: 'none' | 'selected' | 'disabled';
+        styleRef?: string | null;
+        version?: string | null;
+        def?: string | null;
+        def_fixture?: string | null;
+      };
+      style_history_audit_only?: { styleRef?: string; def?: string }[];
+      references?: { id: string; status: string }[];
+      sessionId: string | null;
+      context_version: string | number;
+      operation_id: string;
+      route_idempotency_key: string;
+      input_fingerprint: string;
+      submit_allowed: boolean;
+    },
+  ): Promise<unknown> {
+    return unwrapAsync(
+      this.methods.conceptArt({
+        action,
+        ...(sessionId === undefined ? {} : { sessionId }),
+        ...(styleRef === undefined ? {} : { styleRef }),
+        ...(note === undefined ? {} : { note }),
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        ...(contextVersion === undefined ? {} : { contextVersion }),
+        ...(request === undefined ? {} : { request }),
+      }),
+    );
   }
 
   voiceProviderAdd(

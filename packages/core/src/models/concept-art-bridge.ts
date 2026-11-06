@@ -12,9 +12,16 @@ function invalid(message: string): BridgeResult<never> {
   return { ok: false, error: { code: 'invalid-input', message } };
 }
 
-function failed(error: unknown): BridgeResult<never> {
+function failed(error: unknown): BridgeResult<unknown> {
   if (error instanceof SharedRouteError) {
     return { ok: false, error: { code: error.reason, message: error.message } };
+  }
+  if (typeof error === 'object' && error !== null) {
+    const status = (error as { status?: unknown }).status;
+    const reasons = (error as { reasons?: unknown }).reasons;
+    if (typeof status === 'string' && Array.isArray(reasons)) {
+      return { ok: true, value: { status, reasons, submitCalls: 0, optimization: 'chat-model' } };
+    }
   }
   return { ok: false, error: { code: 'unavailable', message: 'Concept art is not available.' } };
 }
@@ -62,6 +69,26 @@ export function createConceptArtBridge(input: { conceptArt?: Consumer; sharedRou
               mediaDelivery: input.conceptArt.limitsConfigured() ? 'parsed-not-verified' : 'closed',
               referenceImages: 'blocked-prompt-only',
             },
+          };
+        }
+        if (action === 'styles') {
+          return { ok: true, value: { styles: input.conceptArt.listStyles() } };
+        }
+        if (action === 'generateStyle') {
+          const styleRef = body['styleRef'];
+          const note = body['note'];
+          const sessionId = body['sessionId'];
+          if (typeof styleRef !== 'string' || typeof note !== 'string')
+            return invalid('Style reference and note are required.');
+          if (typeof sessionId !== 'string' && sessionId !== null)
+            return invalid('Session is required.');
+          return {
+            ok: true,
+            value: await input.conceptArt.generateStyle({
+              sessionId: sessionId as string | null,
+              styleRef,
+              note,
+            }),
           };
         }
         if (action === 'request') {

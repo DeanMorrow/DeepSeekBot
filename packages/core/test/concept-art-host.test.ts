@@ -350,6 +350,21 @@ describe('concept art host chain', () => {
         const content =
           (JSON.parse(String(init?.body)) as { messages?: { content?: string }[] }).messages?.[0]
             ?.content ?? '';
+        if (content.includes('TASK:generate-style')) {
+          const note = content.split('NOTE_START\n')[1]?.split('\nNOTE_END')[0] ?? '';
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: `NOTE_START\n${note}\nNOTE_END\nDEF_START\nflat color, thick outline\nDEF_END`,
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
         const raw = content.split('RAW_START\n')[1]?.split('\nRAW_END')[0] ?? '';
         const selected =
           content.split('SELECTED_STYLE:\n')[1]?.split('\nCLEARED_STYLES:')[0]?.trim() ?? '';
@@ -575,6 +590,47 @@ describe('concept art host chain', () => {
         }),
     );
     expect(separated).toMatchObject({ status: 'ALLOWED' });
+    const generated = await runConceptArtCommand(
+      'concept-art',
+      ['generate-style', 'harbor-flat'],
+      async () => async (_method, payload) => {
+        const result = await methods.conceptArt(payload);
+        if (!result.ok) throw new Error(result.error.code);
+        return result.value;
+      },
+      async () => '暖灰橙的平涂',
+    );
+    expect(generated).toMatchObject({
+      status: 'ALLOWED',
+      styleRef: 'harbor-flat',
+      def: 'flat color, thick outline',
+      optimization: 'chat-model',
+    });
+    const listed = await runConceptArtCommand(
+      'concept-art',
+      ['styles'],
+      async () => async (_method, payload) => {
+        const result = await methods.conceptArt(payload);
+        if (!result.ok) throw new Error(result.error.code);
+        return result.value;
+      },
+      async () => '',
+    );
+    expect(listed).toMatchObject({
+      styles: [{ styleRef: 'harbor-flat', version: 'v1', def: 'flat color, thick outline' }],
+    });
+    const missingCancel = await methods.conceptArt({
+      action: 'cancel',
+      sessionId: 'missing-session',
+      idempotencyKey: 'missing',
+    });
+    expect(missingCancel).toMatchObject({
+      ok: true,
+      value: {
+        status: 'INTEGRATION_BLOCKED',
+        reasons: ['HOST_CONTEXT_CONTRACT_MISSING'],
+      },
+    });
     await core.runtime.close();
     core.externalMessaging.close();
     await fiber.dispose();

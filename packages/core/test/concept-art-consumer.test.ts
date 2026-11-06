@@ -65,6 +65,21 @@ function harness() {
         const content =
           (JSON.parse(String(init?.body)) as { messages?: { content?: string }[] }).messages?.[0]
             ?.content ?? '';
+        if (content.includes('TASK:generate-style')) {
+          const note = content.split('NOTE_START\n')[1]?.split('\nNOTE_END')[0] ?? '';
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: `NOTE_START\n${note}\nNOTE_END\nDEF_START\nflat color, thick outline\nDEF_END`,
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
         const raw = content.split('RAW_START\n')[1]?.split('\nRAW_END')[0] ?? '';
         const selected =
           content.split('SELECTED_STYLE:\n')[1]?.split('\nCLEARED_STYLES:')[0]?.trim() ?? '';
@@ -756,5 +771,37 @@ describe('concept art consumer', () => {
     expect(stopped.deliverable).toBe(false);
     const stored = env.route.read('session:fixture-ctx-1', 'op-mixed');
     expect(stored.artifact?.kind).toBe('base64');
+    const generated = await consumer.generateStyle({
+      sessionId: 'fixture-ctx-1',
+      styleRef: 'harbor-flat',
+      note: '暖灰橙的平涂',
+    });
+    expect(generated).toMatchObject({
+      status: 'ALLOWED',
+      optimization: 'chat-model',
+      styleRef: 'harbor-flat',
+      def: 'flat color, thick outline',
+    });
+    expect(generated.def).not.toBe(generated.note);
+    expect(consumer.listStyles()).toEqual([
+      { styleRef: 'harbor-flat', version: 'v1', def: 'flat color, thick outline' },
+    ]);
+    const withoutProject = await consumer.generateStyle({
+      sessionId: null,
+      styleRef: 'no-project',
+      note: '只记笔触，不要项目',
+    });
+    expect(withoutProject).toMatchObject({
+      status: 'ALLOWED',
+      optimization: 'chat-model',
+      styleRef: 'no-project',
+      def: 'flat color, thick outline',
+      submitCalls: 1,
+    });
+    expect(withoutProject.def).not.toBe('只记笔触，不要项目');
+    expect(consumer.listStyles().map((item) => item.styleRef)).toEqual([
+      'harbor-flat',
+      'no-project',
+    ]);
   });
 });
