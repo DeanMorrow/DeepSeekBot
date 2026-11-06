@@ -2,7 +2,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { readAuthorizedOpsCatalog } from '@botharness/core';
+const core = await import('@botharness/core').catch(
+  () => import('../packages/core/dist/index.mjs'),
+);
+const { readAuthorizedOpsCatalog } = core;
 
 const root = mkdtempSync(join(tmpdir(), 'catalog-export-'));
 const official = join(root, 'official');
