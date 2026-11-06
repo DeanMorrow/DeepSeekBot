@@ -9,7 +9,7 @@ import {
   type ImageMime,
 } from '../media/image-format.js';
 import type { SessionOwnership } from '../sessions/ownership.js';
-import type { StoredArtifact } from './shared-route.js';
+import { SharedRouteError, type StoredArtifact } from './shared-route.js';
 
 export interface ConceptArtLimits {
   maxEncodedBytes: number;
@@ -39,11 +39,11 @@ export interface ConceptArtRequest {
 }
 
 export interface ConceptArtVerdict {
-  status: 'ALLOWED' | 'BLOCKED' | 'INTEGRATION_BLOCKED' | 'NEEDS_CLARIFICATION';
+  status: 'ALLOWED' | 'BLOCKED' | 'INTEGRATION_BLOCKED' | 'NEEDS_CLARIFICATION' | 'NOT_READY';
   reasons: string[];
   submitCalls: number;
-  /** raw-preserved: the submitted prompt keeps the user's raw text and the selected style def. */
-  optimization: 'raw-preserved';
+  /** chat-model: the image prompt is the shared-route chat reply after a raw-echo check. */
+  optimization: 'chat-model';
   projectId?: string;
   idempotencyKey?: string;
   prompt?: string;
@@ -62,8 +62,8 @@ type RouteTask = {
 
 type ConceptRoute = {
   submit(
-    consumer: 'concept-art',
-    capability: 'image',
+    consumer: 'concept-art' | 'chat',
+    capability: 'image' | 'chat',
     projectId: string,
     idempotencyKey: string,
     prompt: string,
@@ -94,7 +94,9 @@ export function transparencyMaterial(raw: string): 'conflict' | 'separate' | 'un
   const opaque = raw.includes('不透光');
   if (!transparent || !opaque) return 'none';
   if (/完全透明但不透光的\S{1,32}/u.test(raw)) return 'conflict';
-  const paired = raw.match(/完全透明的(\S{1,32}?)[，,]?配不透光的?(\S{1,32})/u);
+  const paired = raw.match(
+    /完全透明的?([^，。；不透光\s]{1,16})[，,]?\s*配不透光的?([^，。；\s]{1,16})/u,
+  );
   if (paired !== null) return paired[1] === paired[2] ? 'conflict' : 'separate';
   const head = (marker: string) =>
     [...raw.matchAll(new RegExp(`${marker}的([^，。；、配和与\\s]{1,32})`, 'gu'))].map(
@@ -111,7 +113,7 @@ export function transparencyMaterial(raw: string): 'conflict' | 'separate' | 'un
 function canonicalFingerprint(request: ConceptArtRequest): string {
   const snapshot = {
     raw_requirement: request.raw_requirement,
-    submit_prompt: composeConceptPrompt(request),
+    submit_prompt: request.submit_prompt ?? '',
     style: {
       state: request.style.state,
       styleRef: request.style.styleRef ?? null,
@@ -141,7 +143,34 @@ function forbiddenLibraryText(request: ConceptArtRequest): string[] {
     .filter((def) => def !== '' && !raw.includes(def));
 }
 
-/** Keep the user's raw words. Add only the selected style def. Drop a caller prompt that reintroduces a cleared library def. */
+function librarySpans(defs: readonly string[]): string[] {
+  const spans = new Set<string>();
+  for (const def of defs) {
+    const trimmed = def.trim();
+    if (trimmed !== '') spans.add(trimmed);
+    for (const part of trimmed.split(/[、,，;；]/u)) {
+      const span = part.trim();
+      if (span.length >= 2) spans.add(span);
+    }
+  }
+  return [...spans].sort((left, right) => right.length - left.length);
+}
+
+/** Remove library-style spans that are not already the user's own raw words. Keep the rest of the sentence. */
+export function exciseLibrarySpans(text: string, defs: readonly string[], raw: string): string {
+  let next = text;
+  for (const span of librarySpans(defs)) {
+    if (raw.includes(span)) continue;
+    next = next.split(span).join('');
+  }
+  return next
+    .replace(/(^|[。！？\n\s])[、,，;；]+/gu, '$1')
+    .replace(/[、,，;；]+(?=[。！？\n]|$)/gu, '')
+    .replace(/\s{2,}/gu, ' ')
+    .trim();
+}
+
+/** Keep the user's raw words. Add only the selected style def. Strip library spans from an added sentence without dropping the rest of it. */
 export function composeConceptPrompt(request: ConceptArtRequest): string {
   const raw = request.raw_requirement.trim();
   const selected =
@@ -150,10 +179,8 @@ export function composeConceptPrompt(request: ConceptArtRequest): string {
       : '';
   const parts = [raw];
   if (selected !== '' && !raw.includes(selected)) parts.push(selected);
-  const extra = (request.submit_prompt ?? '').trim();
-  const cleared = forbiddenLibraryText(request);
-  if (extra !== '' && extra !== raw && !cleared.some((def) => extra.includes(def)))
-    parts.push(extra);
+  const extra = exciseLibrarySpans(request.submit_prompt ?? '', forbiddenLibraryText(request), raw);
+  if (extra !== '' && extra !== raw) parts.push(extra);
   return parts.join('\n');
 }
 
@@ -198,7 +225,59 @@ export function createConceptArtConsumer(input: {
     status: ConceptArtVerdict['status'],
     reasons: string[],
     submitCalls: number,
-  ): ConceptArtVerdict => ({ status, reasons, submitCalls, optimization: 'raw-preserved' });
+  ): ConceptArtVerdict => ({ status, reasons, submitCalls, optimization: 'chat-model' });
+
+  const optimizeWithChat = async (
+    request: ConceptArtRequest,
+    projectId: string,
+  ): Promise<
+    { status: 'ok'; prompt: string } | { status: ConceptArtVerdict['status']; reasons: string[] }
+  > => {
+    const raw = request.raw_requirement.trim();
+    const selected =
+      request.style.state === 'selected'
+        ? (request.style.def ?? request.style.def_fixture ?? '').trim()
+        : '';
+    const cleared = forbiddenLibraryText(request);
+    const instruction = [
+      'Optimize one concept-art requirement through the shared chat route.',
+      'Keep every constraint in the raw requirement.',
+      selected === '' ? 'Do not add a library style.' : 'Apply the selected style definition.',
+      'Do not use a cleared style definition.',
+      'Reply using these markers exactly.',
+      `RAW_START\n${raw}\nRAW_END`,
+      `SELECTED_STYLE:\n${selected}`,
+      `CLEARED_STYLES:\n${cleared.join('\n')}`,
+      'PROMPT_START',
+      'PROMPT_END',
+    ].join('\n');
+    try {
+      const task = await wrapped.submit(
+        'chat',
+        'chat',
+        projectId,
+        `${request.route_idempotency_key}:optimize`,
+        instruction,
+      );
+      const text = task.artifact?.kind === 'text' ? task.artifact.value : undefined;
+      if (task.status !== 'completed' || text === undefined)
+        return { status: 'BLOCKED', reasons: ['OPTIMIZE_FAILED'] };
+      if (!text.includes(`RAW_START\n${raw}\nRAW_END`))
+        return { status: 'BLOCKED', reasons: ['FIDELITY_RAW_MISMATCH'] };
+      const prompt = text.split('PROMPT_START\n')[1]?.split('\nPROMPT_END')[0]?.trim() ?? '';
+      if (prompt === '') return { status: 'BLOCKED', reasons: ['FIDELITY_PROMPT_MISSING'] };
+      const kept = exciseLibrarySpans(prompt, cleared, raw);
+      if (kept === '') return { status: 'ok', prompt: raw };
+      return { status: 'ok', prompt: kept };
+    } catch (error) {
+      if (
+        error instanceof SharedRouteError &&
+        (error.reason === 'unconfigured' || error.reason === 'credential-missing')
+      )
+        return { status: 'NOT_READY', reasons: ['MODEL_NOT_READY'] };
+      throw error;
+    }
+  };
 
   return {
     submitCount: () => submitCalls,
@@ -217,7 +296,6 @@ export function createConceptArtConsumer(input: {
           reasons.push('REFERENCE_REQUIRED_BUT_ROUTE_PROMPT_ONLY');
         else reasons.push(`REFERENCE_STATUS_UNKNOWN_${reference.status}`);
       }
-      const prompt = composeConceptPrompt(request);
       if (
         request.submit_allowed &&
         reasons.length === 1 &&
@@ -229,7 +307,7 @@ export function createConceptArtConsumer(input: {
         return refused('BLOCKED', reasons, submitCalls - before);
       }
       const bound = sessionProjectId(input.ownership, request.sessionId);
-      if ('status' in bound) return { ...bound, submitCalls: 0, optimization: 'raw-preserved' };
+      if ('status' in bound) return { ...bound, submitCalls: 0, optimization: 'chat-model' };
       const fingerprint = canonicalFingerprint(request);
       const existing = readOp(bound.projectId, request.route_idempotency_key);
       if (existing !== undefined && existing.context_version !== String(request.context_version)) {
@@ -237,13 +315,16 @@ export function createConceptArtConsumer(input: {
       }
       if (
         existing !== undefined &&
-        (existing.fingerprint !== fingerprint ||
-          existing.prompt !== prompt ||
-          existing.operation_id !== request.operation_id)
+        (existing.fingerprint !== fingerprint || existing.operation_id !== request.operation_id)
       ) {
         return refused('BLOCKED', ['IDEMPOTENCY_KEY_PAYLOAD_MISMATCH'], 0);
       }
-      if (existing === undefined) {
+      let prompt = existing?.prompt;
+      if (prompt === undefined) {
+        const model = await optimizeWithChat(request, bound.projectId);
+        if (model.status !== 'ok') return refused(model.status, model.reasons, 0);
+        const storedPrompt = model.prompt;
+        prompt = storedPrompt;
         input.database.transaction(
           (db) =>
             db
@@ -258,7 +339,7 @@ export function createConceptArtConsumer(input: {
                 request.operation_id,
                 String(request.context_version),
                 fingerprint,
-                prompt,
+                storedPrompt,
               ),
           ['concept-art'],
         );
@@ -274,7 +355,7 @@ export function createConceptArtConsumer(input: {
         status: 'ALLOWED',
         reasons: [],
         submitCalls: submitCalls - before,
-        optimization: 'raw-preserved',
+        optimization: 'chat-model',
         projectId: bound.projectId,
         idempotencyKey: request.route_idempotency_key,
         prompt: existing?.prompt ?? prompt,
@@ -284,12 +365,29 @@ export function createConceptArtConsumer(input: {
     resume(sessionId: string, idempotencyKey: string) {
       const bound = sessionProjectId(input.ownership, sessionId);
       if ('status' in bound) return Promise.reject(Object.assign(new Error(bound.status), bound));
-      return wrapped.resume(bound.projectId, idempotencyKey);
+      return wrapped
+        .resume(bound.projectId, idempotencyKey)
+        .then((task) =>
+          task.localStop === true
+            ? {
+                ...task,
+                artifact: null,
+                deliverable: false as const,
+                mediaVerified: false as const,
+              }
+            : task,
+        );
     },
     cancel(sessionId: string, idempotencyKey: string) {
       const bound = sessionProjectId(input.ownership, sessionId);
       if ('status' in bound) throw Object.assign(new Error(bound.status), bound);
-      return wrapped.cancel(bound.projectId, idempotencyKey);
+      const task = wrapped.cancel(bound.projectId, idempotencyKey);
+      return {
+        ...task,
+        artifact: null,
+        deliverable: false as const,
+        mediaVerified: false as const,
+      };
     },
     accept(task: RouteTask, contextVersion: string | number) {
       const limits = input.limits;

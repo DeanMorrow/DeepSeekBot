@@ -117,7 +117,29 @@ describe('concept art host chain', () => {
     });
     await fiber.await();
     let posts = 0;
-    const fetchImpl: typeof fetch = async (_input, init) => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes('/chat/completions') || url.includes('/v1/messages')) {
+        const content =
+          (JSON.parse(String(init?.body)) as { messages?: { content?: string }[] }).messages?.[0]
+            ?.content ?? '';
+        const raw = content.split('RAW_START\n')[1]?.split('\nRAW_END')[0] ?? '';
+        const selected =
+          content.split('SELECTED_STYLE:\n')[1]?.split('\nCLEARED_STYLES:')[0]?.trim() ?? '';
+        const prompt = `synthetic-chat-optimized${selected === '' ? '' : ` ${selected}`}`;
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: `RAW_START\n${raw}\nRAW_END\nPROMPT_START\n${prompt}\nPROMPT_END`,
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
       posts += 1;
       const authorization = new Headers(init?.headers).get('authorization');
       expect(authorization).toBe('Bearer sk-host-test');
@@ -147,6 +169,20 @@ describe('concept art host chain', () => {
       'sk-host-test',
     );
     core.sharedRoute.lock('concept-art', 'image', 'apiyi-image', 'fixture-image-model');
+    await core.sharedRoute.saveInstance(
+      {
+        id: 'apiyi-chat',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'chat',
+        protocol: 'openai-chat',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-chat-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-host-test',
+    );
+    core.sharedRoute.lock('chat', 'chat', 'apiyi-chat', 'fixture-chat-model');
     core.ownership.claim({
       sessionId: 'fixture-ctx-1',
       botSlug: 'ada',
@@ -163,7 +199,7 @@ describe('concept art host chain', () => {
     expect(opened).toMatchObject({
       status: 'ALLOWED',
       projectId: 'session:fixture-ctx-1',
-      submitCalls: 1,
+      submitCalls: 2,
     });
     expect(JSON.stringify(opened)).not.toContain('sk-host-test');
     expect(opened.task?.artifact).toMatchObject({ kind: 'base64', mediaVerified: false });
@@ -187,7 +223,7 @@ describe('concept art host chain', () => {
       input_fingerprint: 'fp-t3-poison',
     } as never);
     expect(poisoned.status).toBe('ALLOWED');
-    expect(poisoned.prompt).toContain(String(switched.input.raw_requirement));
+    expect(poisoned.prompt).toContain('synthetic-chat-optimized');
     expect(poisoned.prompt).not.toContain('平涂');
     expect(posts).toBe(2);
     const clean = await core.conceptArt.request({
@@ -196,7 +232,7 @@ describe('concept art host chain', () => {
       submit_prompt: String(switched.expected.submit_prompt),
       submit_allowed: true,
     } as never);
-    expect(clean).toMatchObject({ status: 'ALLOWED', submitCalls: 1 });
+    expect(clean).toMatchObject({ status: 'ALLOWED', submitCalls: 2 });
     expect(clean.prompt).not.toContain('平涂');
     expect(clean.prompt).toContain('水彩、低饱和蓝绿');
     expect(posts).toBe(3);
@@ -308,7 +344,29 @@ describe('concept art host chain', () => {
     await fiber.await();
     const fetchedUrls: string[] = [];
     const fetchImpl: typeof fetch = async (input, init) => {
-      fetchedUrls.push(String(input));
+      const url = String(input);
+      fetchedUrls.push(url);
+      if (url.includes('/chat/completions') || url.includes('/v1/messages')) {
+        const content =
+          (JSON.parse(String(init?.body)) as { messages?: { content?: string }[] }).messages?.[0]
+            ?.content ?? '';
+        const raw = content.split('RAW_START\n')[1]?.split('\nRAW_END')[0] ?? '';
+        const selected =
+          content.split('SELECTED_STYLE:\n')[1]?.split('\nCLEARED_STYLES:')[0]?.trim() ?? '';
+        const prompt = `synthetic-chat-optimized${selected === '' ? '' : ` ${selected}`}`;
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: `RAW_START\n${raw}\nRAW_END\nPROMPT_START\n${prompt}\nPROMPT_END`,
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
       const raw = String(init?.body ?? '');
       const body = raw.includes('BAD_B64')
         ? { data: [{ b64_json: '%%%not-base64%%%' }] }
@@ -343,6 +401,20 @@ describe('concept art host chain', () => {
       'sk-host-test',
     );
     core.sharedRoute.lock('concept-art', 'image', 'apiyi-image', 'fixture-image-model');
+    await core.sharedRoute.saveInstance(
+      {
+        id: 'apiyi-chat',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'chat',
+        protocol: 'openai-chat',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-chat-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-host-test',
+    );
+    core.sharedRoute.lock('chat', 'chat', 'apiyi-chat', 'fixture-chat-model');
     core.ownership.claim({
       sessionId: 'fixture-ctx-1',
       botSlug: 'ada',
@@ -398,7 +470,9 @@ describe('concept art host chain', () => {
       }) as Promise<Record<string, unknown>>;
     };
     expect(await ask('F_STYLE_SELECTED')).toMatchObject({ status: 'ALLOWED' });
-    expect(String((await ask('F_STYLE_NONE_RAW_WATERCOLOR')).prompt)).toContain('watercolor');
+    expect(String((await ask('F_STYLE_NONE_RAW_WATERCOLOR')).prompt)).toContain(
+      'synthetic-chat-optimized',
+    );
     expect(await ask('F_STYLE_DISABLED_SUCCESS')).toMatchObject({ status: 'ALLOWED' });
     const opened = await ask('F_STYLE_NONE');
     const fresh = await ask('F_EXPLICIT_NEW_GENERATION');
@@ -411,7 +485,7 @@ describe('concept art host chain', () => {
       context_version: 2,
     });
     expect(version).toMatchObject({ status: 'BLOCKED', reasons: ['CONTEXT_VERSION_MISMATCH'] });
-    expect(opened).toMatchObject({ status: 'ALLOWED', optimization: 'raw-preserved' });
+    expect(opened).toMatchObject({ status: 'ALLOWED', optimization: 'chat-model' });
     const missing = (await callConceptArt(call, {
       action: 'request',
       request: {
@@ -476,9 +550,9 @@ describe('concept art host chain', () => {
       );
       expect(task.error).toBe(error);
     }
-    expect(fetchedUrls.every((url) => url === 'https://api.apiyi.com/v1/images/generations')).toBe(
-      true,
-    );
+    expect(fetchedUrls.some((url) => url.includes('/chat/completions'))).toBe(true);
+    expect(fetchedUrls.some((url) => url.endsWith('/images/generations'))).toBe(true);
+    expect(fetchedUrls.every((url) => url.startsWith('https://api.apiyi.com/'))).toBe(true);
     const separated = await runConceptArtCommand(
       'concept-art',
       ['request'],

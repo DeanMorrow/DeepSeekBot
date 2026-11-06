@@ -207,3 +207,5 @@ export function AboutSection({
     </Rows>
   );
 }
+
+export { ConceptArtSection } from './concept-art-section.js';

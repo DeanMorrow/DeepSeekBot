@@ -2923,6 +2923,23 @@ const CONCEPT_ART_OPERATION_MIGRATION: SchemaMigration = {
   },
 };
 
+const CONCEPT_ART_STYLE_MIGRATION: SchemaMigration = {
+  generation: 135,
+  module: 'concept-art',
+  description: 'Store reusable concept-art style definitions',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE concept_art_styles (
+        style_ref TEXT NOT NULL,
+        version TEXT NOT NULL,
+        def TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (style_ref, version)
+      );
+    `);
+  },
+};
+
 const SHARED_MODEL_MIGRATION: SchemaMigration = {
   generation: 133,
   module: 'shared-model',
@@ -3294,4 +3311,5 @@ export const BOT_HARNESS_SCHEMA_PLAN = defineSchemaPlan([
   SUPER_AGENT_SOURCE_MIGRATION,
   SHARED_MODEL_MIGRATION,
   CONCEPT_ART_OPERATION_MIGRATION,
+  CONCEPT_ART_STYLE_MIGRATION,
 ]);

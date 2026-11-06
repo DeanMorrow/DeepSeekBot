@@ -5,7 +5,11 @@ import { describe, expect, it } from 'vitest';
 
 import { attachOperationalModule, mountOperationalDatabase } from '../src/database/owner.js';
 import { BOT_HARNESS_SCHEMA_PLAN } from '../src/database/schema-plan.js';
-import { createConceptArtConsumer } from '../src/models/concept-art-consumer.js';
+import {
+  composeConceptPrompt,
+  createConceptArtConsumer,
+  transparencyMaterial,
+} from '../src/models/concept-art-consumer.js';
 import { createMemorySecretStore, createSharedModelRoute } from '../src/models/shared-route.js';
 import { createSessionOwnership } from '../src/sessions/ownership.js';
 import { createTempRoot, FIXED_NOW, trackTestOwner } from './helpers.js';
@@ -50,15 +54,40 @@ function harness() {
   });
   let posts = 0;
   const scripts: unknown[] = [];
+  const chatScripts: unknown[] = [];
   const route = createSharedModelRoute(database, createMemorySecretStore(), {
     now: () => FIXED_NOW().toISOString(),
-    fetch: async () => {
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.includes('/chat/completions') || url.includes('/v1/messages')) {
+        const scripted = chatScripts.shift();
+        if (scripted !== undefined) return new Response(JSON.stringify(scripted), { status: 200 });
+        const content =
+          (JSON.parse(String(init?.body)) as { messages?: { content?: string }[] }).messages?.[0]
+            ?.content ?? '';
+        const raw = content.split('RAW_START\n')[1]?.split('\nRAW_END')[0] ?? '';
+        const selected =
+          content.split('SELECTED_STYLE:\n')[1]?.split('\nCLEARED_STYLES:')[0]?.trim() ?? '';
+        const prompt = `synthetic-chat-optimized${selected === '' ? '' : ` ${selected}`}`;
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: `RAW_START\n${raw}\nRAW_END\nPROMPT_START\n${prompt}\nPROMPT_END`,
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
       posts += 1;
       const body = scripts.length > 0 ? scripts.shift() : { data: [{ b64_json: PNG }] };
       return new Response(JSON.stringify(body), { status: 200 });
     },
   });
-  return { database, ownership, route, posts: () => posts, scripts };
+  return { database, ownership, route, posts: () => posts, scripts, chatScripts };
 }
 
 const caseById = (id: string) => FIXTURES.cases.find((item) => item.id === id)!;
@@ -82,6 +111,20 @@ describe('concept art consumer', () => {
       'sk-test-secret',
     );
     env.route.lock('concept-art', 'image', 'apiyi-image', 'fixture-image-model');
+    await env.route.saveInstance(
+      {
+        id: 'apiyi-chat',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'chat',
+        protocol: 'openai-chat',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-chat-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-test-secret',
+    );
+    env.route.lock('chat', 'chat', 'apiyi-chat', 'fixture-chat-model');
     const consumer = createConceptArtConsumer({
       database: env.database,
       ownership: env.ownership,
@@ -97,9 +140,9 @@ describe('concept art consumer', () => {
       submit_allowed: true,
     } as never);
     expect(opened.status).toBe('ALLOWED');
-    expect(opened.prompt).toContain(String(none.input.raw_requirement));
-    expect(opened.prompt).toContain(String(none.expected.submit_prompt));
-    expect(opened.optimization).toBe('raw-preserved');
+    expect(opened.prompt).toContain('synthetic-chat-optimized');
+    expect(opened.prompt).not.toBe(String(none.expected.submit_prompt));
+    expect(opened.optimization).toBe('chat-model');
     expect(opened.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.idempotencyKey).toBe(none.input.route_idempotency_key);
@@ -148,7 +191,7 @@ describe('concept art consumer', () => {
       input_fingerprint: 'fp-t3-poison',
     } as never);
     expect(poisoned.status).toBe('ALLOWED');
-    expect(poisoned.prompt).toContain(String(switched.input.raw_requirement));
+    expect(poisoned.prompt).toContain('synthetic-chat-optimized');
     expect(poisoned.prompt).toContain('水彩、低饱和蓝绿');
     expect(poisoned.prompt).not.toContain('平涂');
     expect(
@@ -173,7 +216,7 @@ describe('concept art consumer', () => {
           submit_allowed: true,
         } as never)
       ).prompt,
-    ).toContain('watercolor');
+    ).toContain('synthetic-chat-optimized');
     const kept = await consumer.request({
       raw_requirement: '给我一张水彩码头',
       submit_prompt: 'a pier with the medium words removed',
@@ -186,9 +229,9 @@ describe('concept art consumer', () => {
       input_fingerprint: 'fp-keep-watercolor',
       submit_allowed: true,
     });
-    expect(kept.prompt).toContain('水彩');
-    expect(kept.prompt).not.toContain('平涂');
-    expect(kept.optimization).toBe('raw-preserved');
+    expect(kept.prompt).toContain('synthetic-chat-optimized');
+    expect(kept.prompt).not.toContain('a pier with the medium words removed');
+    expect(kept.optimization).toBe('chat-model');
 
     const disabled = caseById('F_STYLE_DISABLED_SUCCESS');
     driven.add(disabled.id);
@@ -276,7 +319,7 @@ describe('concept art consumer', () => {
       submit_allowed: true,
     });
     expect(shield.reasons).not.toContain('CONFLICT_transparent_vs_opaque');
-    expect(shield).toMatchObject({ status: 'ALLOWED', submitCalls: 1 });
+    expect(shield).toMatchObject({ status: 'ALLOWED', submitCalls: 2 });
     const separated = await consumer.request({
       raw_requirement: '完全透明的护罩，配不透光的底座',
       submit_prompt: 'A fully transparent shield with an opaque base.',
@@ -288,7 +331,7 @@ describe('concept art consumer', () => {
       input_fingerprint: 'fp-shield-2',
       submit_allowed: true,
     });
-    expect(separated).toMatchObject({ status: 'ALLOWED', submitCalls: 1 });
+    expect(separated).toMatchObject({ status: 'ALLOWED', submitCalls: 2 });
     expect(separated.reasons).not.toContain('CONFLICT_transparent_vs_opaque');
     const separatedTight = await consumer.request({
       raw_requirement: '完全透明的护罩配不透光底座',
@@ -303,8 +346,8 @@ describe('concept art consumer', () => {
     });
     expect(separatedTight).toMatchObject({
       status: 'ALLOWED',
-      submitCalls: 1,
-      optimization: 'raw-preserved',
+      submitCalls: 2,
+      optimization: 'chat-model',
     });
     const unclear = await consumer.request({
       raw_requirement: '既要完全透明，也要不透光',
@@ -593,5 +636,125 @@ describe('concept art consumer', () => {
       ),
     ).toMatchObject({ accept: false, deliverable: false, reason: 'PIXEL_LIMIT' });
     expect(driven).toEqual(new Set(FIXTURES.cases.map((item) => item.id)));
+  });
+
+  it('keeps a composition sentence, drops only library spans, and does not return a cancelled image', async () => {
+    const history = [{ styleRef: 'fixture-A', def: '平涂、粗轮廓、暖灰橙' }];
+    const base = {
+      style: { state: 'disabled' as const },
+      style_history_audit_only: history,
+      sessionId: 'fixture-ctx-1',
+      context_version: 1,
+      operation_id: 'probe',
+      route_idempotency_key: 'probe',
+      input_fingerprint: 'probe',
+      submit_allowed: true,
+    };
+    const mixed = composeConceptPrompt({
+      ...base,
+      raw_requirement: '角色全身',
+      submit_prompt: '请保持全身可见。平涂、粗轮廓、暖灰橙',
+    });
+    expect(mixed).toContain('角色全身');
+    expect(mixed).toContain('请保持全身可见');
+    expect(mixed).not.toContain('平涂');
+    expect(mixed).not.toContain('粗轮廓');
+    expect(mixed).not.toContain('暖灰橙');
+    const fragment = composeConceptPrompt({
+      ...base,
+      raw_requirement: '角色全身',
+      submit_prompt: '平涂',
+    });
+    expect(fragment).toBe('角色全身');
+    const ownWords = composeConceptPrompt({
+      ...base,
+      raw_requirement: '水彩码头',
+      submit_prompt: '水彩码头，不要平涂',
+    });
+    expect(ownWords).toContain('水彩');
+    expect(ownWords).not.toContain('平涂');
+    expect(transparencyMaterial('完全透明护罩配不透光的底座')).toBe('separate');
+    expect(transparencyMaterial('完全透明但不透光的金属盾牌')).toBe('conflict');
+
+    const env = harness();
+    await env.route.saveInstance(
+      {
+        id: 'apiyi-image',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'image',
+        protocol: 'openai-images',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-image-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-test-secret',
+    );
+    await env.route.saveInstance(
+      {
+        id: 'apiyi-chat',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'chat',
+        protocol: 'openai-chat',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-chat-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-test-secret',
+    );
+    env.route.lock('concept-art', 'image', 'apiyi-image', 'fixture-image-model');
+    env.route.lock('chat', 'chat', 'apiyi-chat', 'fixture-chat-model');
+    env.chatScripts.push({
+      choices: [
+        {
+          message: {
+            content:
+              'RAW_START\n角色全身\nRAW_END\nPROMPT_START\n请保持全身可见。平涂、粗轮廓、暖灰橙\nPROMPT_END',
+          },
+        },
+      ],
+    });
+    const consumer = createConceptArtConsumer({
+      database: env.database,
+      ownership: env.ownership,
+      route: env.route,
+      limits: TEST_LIMITS,
+    });
+    const sent = await consumer.request({
+      ...base,
+      raw_requirement: '角色全身',
+      submit_prompt: '请保持全身可见。平涂、粗轮廓、暖灰橙',
+      operation_id: 'op-mixed',
+      route_idempotency_key: 'op-mixed',
+      input_fingerprint: 'fp-mixed',
+    });
+    expect(sent.status).toBe('ALLOWED');
+    expect(sent.prompt).toContain('请保持全身可见');
+    expect(sent.prompt).not.toContain('平涂');
+    expect(sent.optimization).toBe('chat-model');
+    env.chatScripts.push({
+      choices: [
+        {
+          message: { content: 'RAW_START\n角色全身\nRAW_END\nPROMPT_START\n平涂\nPROMPT_END' },
+        },
+      ],
+    });
+    const onlyStyle = await consumer.request({
+      ...base,
+      raw_requirement: '角色全身',
+      submit_prompt: '平涂',
+      operation_id: 'op-fragment',
+      route_idempotency_key: 'op-fragment',
+      input_fingerprint: 'fp-fragment',
+    });
+    expect(onlyStyle.prompt).toBe('角色全身');
+    expect(onlyStyle.prompt).not.toContain('平涂');
+    const stopped = consumer.cancel('fixture-ctx-1', 'op-mixed');
+    expect(stopped.localStop).toBe(true);
+    expect(stopped.artifact).toBeNull();
+    expect(stopped.deliverable).toBe(false);
+    const stored = env.route.read('session:fixture-ctx-1', 'op-mixed');
+    expect(stored.artifact?.kind).toBe('base64');
   });
 });

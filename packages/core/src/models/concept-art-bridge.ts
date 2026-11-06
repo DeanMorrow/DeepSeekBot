@@ -51,11 +51,13 @@ export function createConceptArtBridge(input: { conceptArt?: Consumer; sharedRou
       const action = body['action'];
       try {
         if (action === 'status') {
-          const route = await input.sharedRoute.describeConsumer('concept-art', 'image');
+          const image = await input.sharedRoute.describeConsumer('concept-art', 'image');
+          const chat = await input.sharedRoute.describeConsumer('chat', 'chat');
           return {
             ok: true,
             value: {
-              ...route,
+              ...image,
+              chatReady: chat.locked && chat.credentialConfigured,
               limitsConfigured: input.conceptArt.limitsConfigured(),
               mediaDelivery: input.conceptArt.limitsConfigured() ? 'parsed-not-verified' : 'closed',
               referenceImages: 'blocked-prompt-only',
