@@ -1,9 +1,10 @@
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools';
 
 import {
-  configuredCatalogOwner,
+  attestationFromHostSession,
   OPS_CATALOG_SOURCE,
   readAuthorizedOpsCatalog,
+  type CatalogSessionProof,
 } from './catalog-source.js';
 import {
   migratePack,
@@ -20,6 +21,7 @@ export interface PackToolHost {
   memoryDir(): string | undefined;
   grant(id: string): PackGrant | undefined;
   catalogSourcePath?(): string | undefined;
+  catalogSession?(): CatalogSessionProof;
 }
 
 function text(value: unknown): string {
@@ -170,13 +172,15 @@ export function createPackTools(botSlug: string, host: PackToolHost): ToolDefini
           authorizedCatalogView(memory(), botSlug, { actor: args.actor }, (sourceRef, slug) => {
             if (sourceRef !== OPS_CATALOG_SOURCE) return undefined;
             const sourcePath = host.catalogSourcePath?.();
-            const ownerId = configuredCatalogOwner(sourcePath);
-            const view = readAuthorizedOpsCatalog(sourcePath, {
-              source: 'host-bot',
-              slug,
-              ownerId,
-              sessionOwnerId: ownerId,
-            });
+            const proof = host.catalogSession?.();
+            const attested =
+              proof === undefined
+                ? undefined
+                : attestationFromHostSession(proof, { kind: 'bot', slug });
+            const view = readAuthorizedOpsCatalog(
+              sourcePath,
+              attested ?? { source: 'host-bot', slug, ownerId: '', sessionOwnerId: '' },
+            );
             if (view.status === 'unreachable') return undefined;
             return {
               status: view.status === 'active' ? 'active' : view.status,
@@ -184,12 +188,12 @@ export function createPackTools(botSlug: string, host: PackToolHost): ToolDefini
               updatedAt: view.updatedAt,
               fingerprint: view.fingerprint,
               briefs: view.inventories.flatMap((item) =>
-                item.status === 'active' && item.brief !== null
+                item.status === 'active' && (item.brief !== null || item.name !== null)
                   ? [
                       {
                         id: item.id,
-                        name: item.id,
-                        brief: item.brief,
+                        name: item.name ?? item.id,
+                        brief: item.purpose ?? item.brief ?? '',
                         entryRef: item.entryRef,
                       },
                     ]

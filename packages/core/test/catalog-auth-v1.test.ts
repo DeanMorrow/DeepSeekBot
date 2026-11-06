@@ -1,22 +1,42 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import {
-  CATALOG_SECTION_7,
+  attestationFromHostSession,
   openAuthorizedOpsEntry,
   readAuthorizedOpsCatalog,
   type CatalogAttestation,
 } from '../src/memory/catalog-source.js';
+import { createPackTools } from '../src/memory/host-pack-tools.js';
 import { createTempRoot } from './helpers.js';
 
 const FIXTURE = join(import.meta.dirname, 'fixtures/catalog-auth-v1/fixtures');
 const PRIVACY = 'SYNTHETIC-legacy-prose-not-auth';
+const CONTRACT_TEXT = 'synthetic contract bytes v2\n';
 
-function sha256(value: string): string {
+function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function contractFingerprint(registryPath: string): string {
+  const body = JSON.parse(readFileSync(registryPath, 'utf8')) as { contract?: unknown };
+  if (typeof body.contract !== 'string' || body.contract.includes('://')) return sha256('unbound');
+  const file = body.contract.startsWith('/')
+    ? body.contract
+    : join(dirname(registryPath), body.contract);
+  return sha256(readFileSync(file));
 }
 
 function attestBot(slug: string, ownerId: string): CatalogAttestation {
@@ -38,20 +58,38 @@ function configFor(registryPath: string, ownerId: string, allowRoots: string[] =
       catalogOwner: ownerId,
       approvalOwner: ownerId,
       privacySha256: sha256(PRIVACY),
-      contractSha256: sha256(CATALOG_SECTION_7),
+      contractSha256: contractFingerprint(registryPath),
       contractVersion: '2',
-      contractPointer: 'synthetic://contract.md',
       allowRoots,
     }),
   );
+  chmodSync(config, 0o600);
   return config;
 }
 
-describe('catalog metadata auth v1 frozen cases', () => {
-  const registry = join(FIXTURE, 'registry.synthetic.json');
+function materializeFixture(ownerId: string): {
+  config: string;
+  contractPath: string;
+  registryPath: string;
+} {
+  const root = createTempRoot('catalog-auth-fixture-');
+  const dir = join(root, 'src');
+  mkdirSync(join(dir, 'entries'), { recursive: true });
+  cpSync(join(FIXTURE, 'entries'), join(dir, 'entries'), { recursive: true });
+  const body = JSON.parse(readFileSync(join(FIXTURE, 'registry.synthetic.json'), 'utf8')) as {
+    contract: string;
+  };
+  body.contract = 'CONTRACT.md';
+  const contractPath = join(dir, 'CONTRACT.md');
+  writeFileSync(contractPath, CONTRACT_TEXT);
+  const registryPath = join(dir, 'registry.json');
+  writeFileSync(registryPath, JSON.stringify(body));
+  return { config: configFor(registryPath, ownerId), contractPath, registryPath };
+}
 
-  it('H1 H5 H7 H20 same-owner bots and the owner read names and purposes', () => {
-    const config = configFor(registry, 'owner-a');
+describe('catalog metadata auth v1 frozen cases', () => {
+  it('H1 H5 H7 H20 same-owner bots and the owner read names and purposes from a real contract file', () => {
+    const { config } = materializeFixture('owner-a');
     for (const caller of [
       attestOwner('owner-a'),
       attestBot('ada', 'owner-a'),
@@ -72,7 +110,7 @@ describe('catalog metadata auth v1 frozen cases', () => {
   });
 
   it('H2 H3 H13 H14 H15 foreign, spoofed, and unbound owners are refused', () => {
-    const config = configFor(registry, 'owner-a');
+    const { config, registryPath } = materializeFixture('owner-a');
     expect(readAuthorizedOpsCatalog(config, attestBot('ada', 'owner-b')).status).toBe(
       'unauthorized',
     );
@@ -82,7 +120,7 @@ describe('catalog metadata auth v1 frozen cases', () => {
       sessionOwnerId: 'owner-a',
     } as unknown as CatalogAttestation;
     expect(readAuthorizedOpsCatalog(config, spoofed).status).toBe('unauthorized');
-    const unbound = configFor(registry, '');
+    const unbound = configFor(registryPath, '');
     expect(readAuthorizedOpsCatalog(unbound, attestBot('ada', 'owner-a')).status).toBe(
       'unauthorized',
     );
@@ -94,12 +132,13 @@ describe('catalog metadata auth v1 frozen cases', () => {
   it('H4 H6 H9 H11 H12 revocation, unknown audiences, and private rows do not leak', () => {
     const root = createTempRoot('catalog-auth-mutate-');
     const registryPath = join(root, 'registry.json');
+    writeFileSync(join(root, 'CONTRACT.md'), CONTRACT_TEXT);
     const body = {
       sourceRef: 'ops:asset-catalog',
       version: 1,
       updatedAt: '2026-11-06T00:00:00.000Z',
       privacy: PRIVACY,
-      contract: 'synthetic://contract.md',
+      contract: 'CONTRACT.md',
       contract_version: '2',
       display: { audiences: ['owner-bots', 'bot:*'] },
       inventories: [
@@ -134,11 +173,11 @@ describe('catalog metadata auth v1 frozen cases', () => {
         catalogOwner: 'owner-revoked',
         approvalOwner: 'owner-revoked',
         privacySha256: sha256(PRIVACY),
-        contractSha256: sha256(CATALOG_SECTION_7),
+        contractSha256: sha256(CONTRACT_TEXT),
         contractVersion: '2',
-        contractPointer: 'synthetic://contract.md',
       }),
     );
+    chmodSync(config, 0o600);
     const revoked = readAuthorizedOpsCatalog(config, attestBot('ada', 'owner-a'));
     expect(revoked.status).toBe('unauthorized');
     expect(revoked.inventories).toEqual([]);
@@ -174,6 +213,7 @@ describe('catalog metadata auth v1 frozen cases', () => {
     const escaped = join(allow, 'escape.json');
     symlinkSync(join(outside, 'body.txt'), escaped);
     const registryPath = join(root, 'registry.json');
+    writeFileSync(join(root, 'CONTRACT.md'), CONTRACT_TEXT);
     writeFileSync(
       registryPath,
       JSON.stringify({
@@ -181,7 +221,7 @@ describe('catalog metadata auth v1 frozen cases', () => {
         version: 1,
         updatedAt: '2026-11-06T00:00:00.000Z',
         privacy: PRIVACY,
-        contract: 'synthetic://contract.md',
+        contract: 'CONTRACT.md',
         contract_version: '2',
         display: { audiences: ['profile-owner'] },
         inventories: [
@@ -234,6 +274,7 @@ describe('catalog metadata auth v1 frozen cases', () => {
   it('H10 H16 H17 unknown privacy or contract versions do not stay active', () => {
     const root = createTempRoot('catalog-auth-legacy-');
     const registryPath = join(root, 'registry.json');
+    writeFileSync(join(root, 'CONTRACT.md'), CONTRACT_TEXT);
     writeFileSync(
       registryPath,
       JSON.stringify({
@@ -241,7 +282,7 @@ describe('catalog metadata auth v1 frozen cases', () => {
         version: 1,
         updatedAt: '2026-11-06T00:00:00.000Z',
         privacy: { mode: 'synthetic-privacy-mode' },
-        contract: 'synthetic://contract.md',
+        contract: 'CONTRACT.md',
         contract_version: '2',
         display: { audiences: ['profile-owner'] },
         inventories: [
@@ -268,15 +309,112 @@ describe('catalog metadata auth v1 frozen cases', () => {
     };
     rewritten.privacy = PRIVACY;
     rewritten.contract_version = '2';
-    rewritten.inventories[0]!.name = '/memory/private/secret';
+    rewritten.inventories[0]!.name = 'private-bot-store';
     writeFileSync(registryPath, JSON.stringify(rewritten));
-    const enforced = readAuthorizedOpsCatalog(config, attestOwner('owner-a'));
-    expect(enforced.status).toBe('active');
-    expect(JSON.stringify(enforced)).not.toContain('/memory/private/secret');
+    const named = readAuthorizedOpsCatalog(config, attestOwner('owner-a'));
+    expect(named.status).toBe('active');
+    expect(named.inventories.map((item) => item.name)).toEqual(['private-bot-store']);
+    const hidden = JSON.parse(readFileSync(registryPath, 'utf8')) as {
+      inventories: Array<{ private?: boolean }>;
+    };
+    hidden.inventories[0]!.private = true;
+    writeFileSync(registryPath, JSON.stringify(hidden));
+    expect(readAuthorizedOpsCatalog(config, attestOwner('owner-a')).inventories).toEqual([]);
     rewritten.contract_version = '9';
     writeFileSync(registryPath, JSON.stringify(rewritten));
     const newVersion = readAuthorizedOpsCatalog(config, attestOwner('owner-a'));
     expect(newVersion.status).toBe('unauthorized');
     expect(newVersion.inventories).toEqual([]);
+  });
+
+  it('binds a real contract file and refuses changed, missing, and escaped bytes', () => {
+    const { config, contractPath } = materializeFixture('owner-a');
+    const caller = attestOwner('owner-a');
+    expect(readAuthorizedOpsCatalog(config, caller).status).toBe('active');
+    expect(JSON.stringify(readAuthorizedOpsCatalog(config, caller))).not.toContain(
+      CONTRACT_TEXT.trim(),
+    );
+    writeFileSync(contractPath, `${CONTRACT_TEXT}changed`);
+    expect(readAuthorizedOpsCatalog(config, caller).status).toBe('unauthorized');
+    writeFileSync(contractPath, CONTRACT_TEXT);
+    expect(readAuthorizedOpsCatalog(config, caller).status).toBe('active');
+    unlinkSync(contractPath);
+    expect(readAuthorizedOpsCatalog(config, caller).status).toBe('unauthorized');
+    expect(existsSync(contractPath)).toBe(false);
+    writeFileSync(contractPath, CONTRACT_TEXT);
+    const outside = join(dirname(contractPath), 'outside-contract.md');
+    writeFileSync(outside, CONTRACT_TEXT);
+    unlinkSync(contractPath);
+    symlinkSync(outside, contractPath);
+    expect(readAuthorizedOpsCatalog(config, caller).status).toBe('unauthorized');
+    const frozen = configFor(join(FIXTURE, 'registry.synthetic.json'), 'owner-a');
+    const synthetic = readAuthorizedOpsCatalog(frozen, caller);
+    expect(synthetic.status).toBe('unauthorized');
+    expect(synthetic.inventories).toEqual([]);
+  });
+
+  it('refuses a group-writable approval config and a session that is not the configured owner', async () => {
+    const { config, registryPath } = materializeFixture('owner-a');
+    chmodSync(config, 0o666);
+    expect(readAuthorizedOpsCatalog(config, attestOwner('owner-a')).status).toBe('unauthorized');
+    chmodSync(config, 0o600);
+    expect(readAuthorizedOpsCatalog(config, attestOwner('owner-a')).status).toBe('active');
+    const memory = createTempRoot('catalog-auth-memory-');
+    mkdirSync(join(memory, '.botharness', 'catalog'), { recursive: true });
+    writeFileSync(
+      join(memory, '.botharness', 'catalog', 'index.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        version: 1,
+        inventories: [
+          {
+            id: 'ops',
+            authority: 'ops',
+            sourceRef: 'ops:asset-catalog',
+            version: 1,
+            status: 'active',
+          },
+        ],
+      }),
+    );
+    const tools = createPackTools('ada', {
+      memoryDir: () => memory,
+      grant: () => undefined,
+      catalogSourcePath: () => config,
+      catalogSession: () => ({ sessionOwnerId: 'owner-a', ownedBotSlugs: ['ada'] }),
+    });
+    const tool = tools.find((item) => item.name === 'pack_catalog');
+    const allowed = JSON.parse(String(await tool?.execute({}, {} as never))) as {
+      inventories: Array<{ briefs: Array<{ name: string }> }>;
+    };
+    expect(JSON.stringify(allowed)).toContain('SYN-Name-A');
+    const foreign = createPackTools('ada', {
+      memoryDir: () => memory,
+      grant: () => undefined,
+      catalogSourcePath: () => config,
+      catalogSession: () => ({ sessionOwnerId: 'owner-b', ownedBotSlugs: ['ada'] }),
+    });
+    const foreignTool = foreign.find((item) => item.name === 'pack_catalog');
+    expect(JSON.stringify(await foreignTool?.execute({}, {} as never))).not.toContain('SYN-Name-A');
+    const unregistered = createPackTools('ada', {
+      memoryDir: () => memory,
+      grant: () => undefined,
+      catalogSourcePath: () => config,
+      catalogSession: () => ({ sessionOwnerId: 'owner-a', ownedBotSlugs: [] }),
+    });
+    const unregisteredTool = unregistered.find((item) => item.name === 'pack_catalog');
+    expect(JSON.stringify(await unregisteredTool?.execute({}, {} as never))).not.toContain(
+      'SYN-Name-A',
+    );
+    expect(
+      attestationFromHostSession(
+        { sessionOwnerId: 'owner-a', ownedBotSlugs: ['ada'] },
+        { kind: 'bot', slug: 'bee' },
+      ),
+    ).toBeUndefined();
+    expect(
+      readAuthorizedOpsCatalog(config, attestOwner('owner-a')).inventories.length,
+    ).toBeGreaterThan(0);
+    expect(registryPath).toContain('registry.json');
   });
 });

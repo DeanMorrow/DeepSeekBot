@@ -1452,6 +1452,10 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
   );
   const turnRefusals = new Map<string, string>();
   ctx.effect(() => () => turnRefusals.clear(), 'botharness: refused Turn reasons');
+  const catalogSession = () => ({
+    sessionOwnerId: createHash('sha256').update(dshHome).digest('hex'),
+    ownedBotSlugs: core.registry.list().map((bot) => bot.slug),
+  });
   const agentAdapter = createDshBotAgentAdapter({
     agents: ctx.agents,
     promptText: (sessionId) => core.prompts.textForSession(sessionId),
@@ -1474,6 +1478,7 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
     },
     orchestratorCwd: (bot) => core.registry.memoryDirFor(bot.slug),
     catalogSourcePath: () => join(dshHome, 'botharness', 'catalog-source.json'),
+    catalogSession,
     workspaceGrants: (slug) => core.grants.list(slug),
     observePreparation: (slug, sessionId, preparing) => {
       if (!preparing && core.states.snapshot(slug).sessions[sessionId] !== 'thinking') return;
@@ -2867,6 +2872,7 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
   });
   const bridgeMethods = createBridgeMethods({
     catalogSourcePath: join(dshHome, 'botharness', 'catalog-source.json'),
+    catalogSession,
     voiceProviders: core.voiceProviders,
     voiceLog: (phase, fields) => diagnosticEvents.record('voice', phase, fields),
     prompts: core.prompts,

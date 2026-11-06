@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,6 +34,7 @@ writeFileSync(
     approvalOwner: 'owner-a',
   }),
 );
+chmodSync(config, 0o600);
 const view = readAuthorizedOpsCatalog(config, {
   source: 'host-session',
   sessionOwnerId: 'owner-a',

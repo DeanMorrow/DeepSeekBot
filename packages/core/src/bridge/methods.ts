@@ -4,7 +4,7 @@ import { networkBotId, type BotContact } from '../runtime/bot-contact-discovery.
 import { BotNetworkDeliveryError } from '../runtime/bot-network.js';
 import { join } from 'node:path';
 import {
-  configuredCatalogOwner,
+  attestationFromHostSession,
   openAuthorizedOpsEntry,
   readAuthorizedOpsCatalog,
 } from '../memory/catalog-source.js';
@@ -1226,6 +1226,7 @@ export interface BridgeMethodsDeps {
   roster: RosterStore;
   runtime?: BotRuntime;
   catalogSourcePath?: string;
+  catalogSession?: () => { sessionOwnerId: string; ownedBotSlugs: readonly string[] };
   attention?: BotAttentionQuery;
   sourcePolicy?: BotSourcePolicyStore;
   schedules?: BotScheduleStore;
@@ -7983,10 +7984,15 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
       return {
         ok: true,
         value: {
-          catalog: readAuthorizedOpsCatalog(deps.catalogSourcePath, {
-            source: 'host-session',
-            sessionOwnerId: configuredCatalogOwner(deps.catalogSourcePath),
-          }),
+          catalog: readAuthorizedOpsCatalog(
+            deps.catalogSourcePath,
+            attestationFromHostSession(
+              deps.catalogSession?.() ?? { sessionOwnerId: '', ownedBotSlugs: [] },
+              {
+                kind: 'profile-owner',
+              },
+            ) ?? { source: 'host-session', sessionOwnerId: '' },
+          ),
         },
       };
     },
@@ -8000,10 +8006,12 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
         value: {
           catalog: openAuthorizedOpsEntry(
             deps.catalogSourcePath,
-            {
-              source: 'host-session',
-              sessionOwnerId: configuredCatalogOwner(deps.catalogSourcePath),
-            },
+            attestationFromHostSession(
+              deps.catalogSession?.() ?? { sessionOwnerId: '', ownedBotSlugs: [] },
+              {
+                kind: 'profile-owner',
+              },
+            ) ?? { source: 'host-session', sessionOwnerId: '' },
             entryRef.trim(),
           ),
         },

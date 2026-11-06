@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -78,6 +78,7 @@ function writeRegistry(root: string, registry: unknown = REGISTRY) {
       approvalOwner: OWNER,
     }),
   );
+  chmodSync(config, 0o600);
   return config;
 }
 

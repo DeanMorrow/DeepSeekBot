@@ -17,8 +17,30 @@ interface CatalogBinding {
   privacySha256?: string;
   contractSha256?: string;
   contractVersion?: string;
-  contractPointer?: string;
   allowRoots: string[];
+}
+
+export interface CatalogSessionProof {
+  sessionOwnerId: string;
+  ownedBotSlugs: readonly string[];
+}
+
+/** Builds a Host attestation from the profile session and the Bot registry. It does not read catalogOwner. */
+export function attestationFromHostSession(
+  session: CatalogSessionProof,
+  caller: { kind: 'profile-owner' } | { kind: 'bot'; slug: string },
+): CatalogAttestation | undefined {
+  if (session.sessionOwnerId.trim() === '') return undefined;
+  if (caller.kind === 'profile-owner') {
+    return { source: 'host-session', sessionOwnerId: session.sessionOwnerId };
+  }
+  if (caller.slug.trim() === '' || !session.ownedBotSlugs.includes(caller.slug)) return undefined;
+  return {
+    source: 'host-bot',
+    slug: caller.slug,
+    ownerId: session.sessionOwnerId,
+    sessionOwnerId: session.sessionOwnerId,
+  };
 }
 
 export interface CatalogInventoryView {
@@ -453,7 +475,7 @@ function inventoriesOf(value: unknown): RegistryInventory[] | undefined {
 }
 
 function loadRegistry(configPath: string):
-  | { status: 'unreachable' | 'invalid' }
+  | { status: 'unreachable' | 'invalid' | 'unauthorized' }
   | {
       status: 'ready';
       root: string;
@@ -468,7 +490,9 @@ function loadRegistry(configPath: string):
     } {
   if (!existsSync(configPath)) return { status: 'unreachable' };
   try {
-    if (lstatSync(configPath).isSymbolicLink()) return { status: 'unreachable' };
+    const configStat = lstatSync(configPath);
+    if (configStat.isSymbolicLink()) return { status: 'unreachable' };
+    if ((configStat.mode & 0o022) !== 0) return { status: 'unauthorized' };
   } catch {
     return { status: 'unreachable' };
   }
@@ -513,9 +537,6 @@ function loadRegistry(configPath: string):
     ...(typeof configRecord.contractVersion === 'string'
       ? { contractVersion: configRecord.contractVersion }
       : {}),
-    ...(typeof configRecord.contractPointer === 'string'
-      ? { contractPointer: configRecord.contractPointer }
-      : {}),
     allowRoots: Array.isArray(configRecord.allowRoots)
       ? configRecord.allowRoots.filter((item): item is string => typeof item === 'string')
       : [],
@@ -547,7 +568,26 @@ function sha256Text(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function legacyAllows(record: Record<string, unknown>, binding: CatalogBinding): boolean {
+function contractFileBytes(
+  root: string,
+  pointer: string,
+  allowRoots: readonly string[],
+): Buffer | undefined {
+  if (pointer.includes('://') || pointer.includes('\\') || pointer.includes('\0')) return undefined;
+  const file = containedFile(root, pointer, allowRoots);
+  if (file === undefined) return undefined;
+  try {
+    return readFileSync(file);
+  } catch {
+    return undefined;
+  }
+}
+
+function legacyAllows(
+  record: Record<string, unknown>,
+  binding: CatalogBinding,
+  root: string,
+): boolean {
   const hasPrivacy = 'privacy' in record;
   const hasContract = 'contract' in record || 'contract_version' in record;
   if (!hasPrivacy && !hasContract) return true;
@@ -559,10 +599,15 @@ function legacyAllows(record: Record<string, unknown>, binding: CatalogBinding):
   }
   if (typeof record.contract === 'string') {
     if (binding.contractVersion !== record.contract_version) return false;
-    if (binding.contractSha256 !== sha256Text(CATALOG_SECTION_7)) return false;
-    if (record.contract.startsWith('synthetic://'))
-      return binding.contractPointer === record.contract;
-    return false;
+    if (
+      typeof binding.contractSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(binding.contractSha256)
+    ) {
+      return false;
+    }
+    const bytes = contractFileBytes(root, record.contract, binding.allowRoots);
+    if (bytes === undefined) return false;
+    return createHash('sha256').update(bytes).digest('hex') === binding.contractSha256;
   }
   return !hasContract;
 }
@@ -628,17 +673,6 @@ function categoryView(
   };
 }
 
-export function configuredCatalogOwner(configPath: string | undefined): string {
-  if (configPath === undefined || configPath.trim() === '' || !existsSync(configPath)) return '';
-  try {
-    if (lstatSync(configPath).isSymbolicLink()) return '';
-    const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as { catalogOwner?: unknown };
-    return typeof parsed.catalogOwner === 'string' ? parsed.catalogOwner : '';
-  } catch {
-    return '';
-  }
-}
-
 export function readAuthorizedOpsCatalog(
   configPath: string | undefined,
   caller: CatalogAttestation,
@@ -646,7 +680,10 @@ export function readAuthorizedOpsCatalog(
   if (configPath === undefined || configPath.trim() === '') return empty(caller, 'unreachable');
   const loaded = loadRegistry(configPath);
   if (loaded.status !== 'ready') return empty(caller, loaded.status);
-  if (!boundOwner(loaded.binding, caller) || !legacyAllows(loaded.record, loaded.binding)) {
+  if (
+    !boundOwner(loaded.binding, caller) ||
+    !legacyAllows(loaded.record, loaded.binding, loaded.root)
+  ) {
     return empty(caller, 'unauthorized', authorizationGaps(loaded.record));
   }
   if (!allowed(loaded.display, caller)) return empty(caller, 'unauthorized');
