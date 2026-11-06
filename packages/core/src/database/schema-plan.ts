@@ -2864,6 +2864,46 @@ const VOICE_SETTINGS_MIGRATION: SchemaMigration = {
   },
 };
 
+const SUPER_AGENT_RUN_MIGRATION: SchemaMigration = {
+  generation: 131,
+  module: 'super-agent',
+  description: 'Persist super-agent work orders, run ownership and concurrency slots',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE super_agent_orders (
+        order_id TEXT PRIMARY KEY,
+        bot_slug TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        grant_id TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        steps_json TEXT NOT NULL,
+        acceptance TEXT NOT NULL,
+        sealed_at TEXT NOT NULL
+      );
+      CREATE INDEX super_agent_orders_owner
+        ON super_agent_orders (bot_slug, session_id, grant_id, order_id);
+      CREATE TABLE super_agent_runs (
+        run_id TEXT PRIMARY KEY,
+        bot_slug TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        grant_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        order_ids_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE super_agent_slots (
+        run_id TEXT NOT NULL REFERENCES super_agent_runs(run_id),
+        slot_index INTEGER NOT NULL,
+        bot_slug TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'working', 'stopped', 'settled')),
+        assignment_session_id TEXT,
+        PRIMARY KEY (run_id, slot_index)
+      );
+      CREATE INDEX super_agent_slots_bot_state ON super_agent_slots (bot_slug, state);
+    `);
+  },
+};
+
 const CHANNEL_CHANGE_LOG_MIGRATION: SchemaMigration = {
   generation: 130,
   module: 'messaging',
@@ -3189,4 +3229,5 @@ export const BOT_HARNESS_SCHEMA_PLAN = defineSchemaPlan([
   VOICE_DEFAULTS_MIGRATION,
   VOICE_SETTINGS_MIGRATION,
   CHANNEL_CHANGE_LOG_MIGRATION,
+  SUPER_AGENT_RUN_MIGRATION,
 ]);

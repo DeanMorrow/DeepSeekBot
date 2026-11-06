@@ -2,7 +2,7 @@ import { createChannelActionTool } from './channel-action-tool.js';
 import { PRIVATE_INPUT_TOOLS } from '../credentials/tool-contract.js';
 import { createBotMessageTool } from './bot-message-tool.js';
 import { createPackTools } from '../memory/host-pack-tools.js';
-import { cancelSuperAgentRun, runSuperAgent } from './super-agent-dispatch.js';
+import { cancelSuperAgentRun, runSuperAgent, sealWorkOrders } from './super-agent-dispatch.js';
 import { assertOrchestratorWorkingDirectory } from './orchestrator-working-directory.js';
 import { TOB_CLI_PROMPT } from '../tob/service.js';
 import { AssignmentInboxAcceptanceUncertainError } from './assignment-delivery.js';
@@ -73,6 +73,21 @@ export const TURN_ONLY_BOT_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 const CATALOG_RUN = { sessionId: '', bot: { slug: '' } } as unknown as OrchestratorAgentRun;
+
+function parseOrderIds(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some((item) => typeof item !== 'string' || item.trim() === '')
+    ) {
+      return [];
+    }
+    return parsed;
+  } catch {
+    return [];
+  }
+}
 
 function withContextMentionNames<
   T extends { text: string; mentions?: MessagingInboundEvent['mentions'] },
@@ -1408,13 +1423,12 @@ class DshBotAgentAdapter implements BotAgentAdapter {
       defineTool({
         name: 'super_agent_run',
         description:
-          'Schedule at most three Assignment Sessions from explicit work orders on an active Workspace Grant. A host call can start model work and may cost. Does not install the prototype, replace presets, create a Grant, or copy parent chat. Depth 2, two running or queued at a time, three in flight.',
+          'Schedule sealed work orders on an active Workspace Grant. Order ids must already belong to this session, Bot and Grant. A host call can start model work and may cost. Depth 2, two running or queued at a time.',
         parameters: {
-          work_orders: {
+          order_ids: {
             type: 'string',
             required: true,
-            description:
-              'JSON array of {goal, steps, acceptance}. This is the only task text sent to a child. A raw parent transcript is refused.',
+            description: 'JSON array of order ids returned by super_agent_seal.',
           },
           grant_id: {
             type: 'string',
@@ -1440,15 +1454,21 @@ class DshBotAgentAdapter implements BotAgentAdapter {
           if (active?.role !== 'orchestrator') {
             throw new Error('super_agent_run: Orchestrator run is unavailable');
           }
+          if (active.run.superAgent === undefined) {
+            throw new Error('super_agent_run: durable ledger is unavailable');
+          }
+          const orderIds = parseOrderIds(args.order_ids);
           const value = await runSuperAgent(
             {
-              workOrders: args.work_orders,
+              orderIds,
               grantId: args.grant_id,
               depth: args.depth,
               runId: args.run_id,
               sessionId: run.sessionId,
               botSlug: active.run.bot.slug,
+              now: new Date().toISOString(),
             },
+            active.run.superAgent,
             {
               kind: 'host-assignment',
               grants: () => active.run.assignments.grants(),
@@ -1459,6 +1479,40 @@ class DshBotAgentAdapter implements BotAgentAdapter {
             context.signal,
           );
           return JSON.stringify(value);
+        },
+      }),
+    );
+    registerTool(
+      defineTool({
+        name: 'super_agent_seal',
+        description:
+          'Store explicit work orders for this session, Bot and Grant. Does not read private memory or schedule a model.',
+        parameters: {
+          grant_id: { type: 'string', required: true, description: 'Active Workspace Grant id.' },
+          work_orders: {
+            type: 'string',
+            required: true,
+            description:
+              'JSON array of {goal, steps, acceptance}. Authorization flags are refused.',
+          },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        execute: async (args) => {
+          const active = this.#runs.get(run.sessionId);
+          if (active?.role !== 'orchestrator' || active.run.superAgent === undefined) {
+            throw new Error('super_agent_seal: durable ledger is unavailable');
+          }
+          const sealed = sealWorkOrders(active.run.superAgent, {
+            botSlug: active.run.bot.slug,
+            sessionId: run.sessionId,
+            grantId: args.grant_id,
+            orders: args.work_orders,
+            now: new Date().toISOString(),
+          });
+          return JSON.stringify(sealed);
         },
       }),
     );
@@ -1485,8 +1539,8 @@ class DshBotAgentAdapter implements BotAgentAdapter {
         },
         execute: async (args) => {
           const active = this.#runs.get(run.sessionId);
-          if (active?.role !== 'orchestrator') {
-            throw new Error('super_agent_cancel: Orchestrator run is unavailable');
+          if (active?.role !== 'orchestrator' || active.run.superAgent === undefined) {
+            throw new Error('super_agent_cancel: durable ledger is unavailable');
           }
           const value = await cancelSuperAgentRun(
             {
@@ -1495,6 +1549,7 @@ class DshBotAgentAdapter implements BotAgentAdapter {
               sessionId: run.sessionId,
               botSlug: active.run.bot.slug,
             },
+            active.run.superAgent,
             {
               kind: 'host-assignment',
               grants: () => active.run.assignments.grants(),
