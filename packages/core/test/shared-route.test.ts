@@ -153,10 +153,11 @@ describe('shared model route', () => {
     expect(image).toMatchObject({
       protocol: 'openai-images',
       remoteTaskId: null,
-      status: 'completed',
-      artifact: { kind: 'base64', value: 'QUJD' },
+      status: 'failed',
+      error: 'invalid-payload',
+      artifact: { kind: 'raw-provider-response', mediaVerified: false },
     });
-    expect(JSON.stringify(image)).not.toContain('image/png');
+    expect(image.artifact?.kind).not.toBe('base64');
     await expect(
       harness.route.submit('chat', 'image', 'project-a', 'img-2', 'a lighthouse'),
     ).rejects.toMatchObject({
@@ -281,7 +282,9 @@ describe('shared model route', () => {
 
   it('sends Anthropic messages on the root host and records image products without pretending they are files', async () => {
     const calls: Array<{ url: string; headers: Headers; body: unknown }> = [];
-    let imageMode: 'base64' | 'url' | 'empty' = 'url';
+    const png =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    let imageMode: 'base64' | 'url' | 'empty' | 'bad-b64' | 'bad-url' = 'url';
     const harness = open(async (url, init) => {
       calls.push({
         url: String(url),
@@ -294,13 +297,23 @@ describe('shared model route', () => {
         });
       }
       if (imageMode === 'empty') return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      if (imageMode === 'bad-b64') {
+        return new Response(JSON.stringify({ data: [{ b64_json: '%%%not-base64%%%' }] }), {
+          status: 200,
+        });
+      }
+      if (imageMode === 'bad-url') {
+        return new Response(JSON.stringify({ data: [{ url: 'not-a-url-but-nonempty' }] }), {
+          status: 200,
+        });
+      }
       if (imageMode === 'url') {
         return new Response(
           JSON.stringify({ data: [{ url: 'https://untrusted.example/image' }] }),
           { status: 200 },
         );
       }
-      return new Response(JSON.stringify({ data: [{ b64_json: 'QUJD' }] }), { status: 200 });
+      return new Response(JSON.stringify({ data: [{ b64_json: png }] }), { status: 200 });
     });
     await harness.route.saveInstance(
       {
@@ -326,7 +339,7 @@ describe('shared model route', () => {
       max_tokens: 1024,
       messages: [{ role: 'user', content: 'hello' }],
     });
-    expect(reply.artifact).toEqual({ kind: 'text', value: 'native reply' });
+    expect(reply.artifact).toEqual({ kind: 'text', mediaVerified: false, value: 'native reply' });
     await harness.route.saveInstance({
       id: 'apiyi-image',
       gateway: 'apiyi',
@@ -347,6 +360,7 @@ describe('shared model route', () => {
     );
     expect(linked.artifact).toEqual({
       kind: 'untrusted-url',
+      mediaVerified: false,
       url: 'https://untrusted.example/image',
     });
     expect(calls.filter((call) => call.url === 'https://untrusted.example/image')).toHaveLength(0);
@@ -359,8 +373,125 @@ describe('shared model route', () => {
       'prompt',
     );
     expect(empty).toMatchObject({ status: 'failed', error: 'empty-artifact' });
+    imageMode = 'bad-b64';
+    const badB64 = await harness.route.submit(
+      'concept-art',
+      'image',
+      'project-a',
+      'img-bad-b64',
+      'prompt',
+    );
+    expect(badB64).toMatchObject({ status: 'failed', error: 'invalid-payload' });
+    expect(badB64.artifact?.kind).not.toBe('base64');
+    imageMode = 'bad-url';
+    const badUrl = await harness.route.submit(
+      'concept-art',
+      'image',
+      'project-a',
+      'img-bad-url',
+      'prompt',
+    );
+    expect(badUrl).toMatchObject({ status: 'failed', error: 'invalid-payload' });
+    expect(badUrl.artifact?.kind).not.toBe('untrusted-url');
     await expect(harness.route.resume('project-b', 'img-url')).rejects.toMatchObject({
       reason: 'wrong-project',
     });
+    imageMode = 'base64';
+    const callsBefore = calls.length;
+    const decoded = await harness.route.submit(
+      'concept-art',
+      'image',
+      'project-a',
+      'img-png',
+      'prompt',
+    );
+    expect(decoded).toMatchObject({
+      status: 'completed',
+      error: null,
+      artifact: {
+        kind: 'base64',
+        mediaVerified: false,
+        value: png,
+        inspected: { mime: 'image/png' },
+      },
+    });
+    expect(calls.length).toBe(callsBefore + 1);
+  });
+
+  it('clears a stale provider error after a later success and keeps a legacy local stop', async () => {
+    let providerStatus = 'failed';
+    const harness = open(async (_url, init) => {
+      if (init?.method === 'POST')
+        return new Response(JSON.stringify({ id: 'remote-7' }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          id: 'remote-7',
+          status: providerStatus,
+          content: { video_url: 'https://cdn.example/clip.mp4' },
+        }),
+        { status: 200 },
+      );
+    });
+    await harness.route.saveInstance(
+      {
+        id: 'apiyi-video',
+        gateway: 'apiyi',
+        vendor: 'bytedance',
+        capability: 'video',
+        protocol: 'apiyi-seedance',
+        baseUrl: 'https://api.apiyi.com',
+        models: ['doubao-seedance-2-5-260628'],
+        credentialRef: 'apiyi-account',
+      },
+      SECRET,
+    );
+    await harness.route.submit('concept-art', 'video', 'project-a', 'clip-3', 'a sphere');
+    const failed = await harness.route.resume('project-a', 'clip-3');
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'provider-failed',
+      providerStatus: 'failed',
+    });
+    providerStatus = 'succeeded';
+    const succeeded = await harness.route.resume('project-a', 'clip-3');
+    expect(succeeded).toMatchObject({
+      status: 'completed',
+      error: null,
+      providerStatus: 'succeeded',
+      remoteTaskId: 'remote-7',
+      artifact: {
+        kind: 'untrusted-url',
+        mediaVerified: false,
+        url: 'https://cdn.example/clip.mp4',
+      },
+    });
+    harness.database.transaction((db) => {
+      db.prepare(
+        `INSERT INTO shared_model_tasks (id, project_id, idempotency_key, body, created_at)
+         VALUES ('legacy', 'project-a', 'legacy-clip', ?, ?)`,
+      ).run(
+        JSON.stringify({
+          id: 'legacy',
+          projectId: 'project-a',
+          idempotencyKey: 'legacy-clip',
+          providerId: 'apiyi-video',
+          capability: 'video',
+          protocol: 'apiyi-seedance',
+          model: 'doubao-seedance-2-5-260628',
+          remoteTaskId: 'remote-old',
+          status: 'cancelled',
+          artifact: null,
+          error: null,
+          remoteCancel: 'unverified',
+        }),
+        '2026-11-06T00:00:00.000Z',
+      );
+    });
+    providerStatus = 'running';
+    const legacy = await harness.route.resume('project-a', 'legacy-clip');
+    expect(legacy.localStop).toBe(true);
+    expect(legacy.remoteTaskId).toBe('remote-old');
+    expect(legacy.providerStatus).toBe('running');
+    expect(legacy.status).not.toBe('cancelled');
   });
 });

@@ -18,6 +18,6 @@ API易按协议使用不同基址，不能收成一个全局 `/v1`：
 
 `createMemorySecretStore` 只是测试用的内存实现。生产环境的 DSH 凭证服务没有接到这条路由。`createModelCatalog` 也没有调用它。`chat` 和 `concept-art` 只是参数和锁，不是已接上的聊天界面或概念图插件。
 
-密钥只进 `SecretStore`。图像成功时取出 `b64_json`，或把 `url` 标成 `untrusted-url`。不把整段 JSON 标成 `image/png`，也不去请求那个 URL。视频成功时只记录 `content.video_url` 为不受信 URL，不标成 `video/mp4`。没有可取字段时是 `raw-provider-response`，错误是 `empty-artifact`。
+密钥只进 `SecretStore`。图像只有能用现有 `inspectImage` 解码并认出格式时才记为 `base64`，并带上宽高。`mediaVerified` 一律是 `false`：这不是概念图可以交付的证明，交付前仍要自己检查格式和大小。解不开或不是 http(s) 的字符串是 `invalid-payload`，不是已完成的媒体。`untrusted-url` 只保留地址，不去请求。没有可取字段时是 `raw-provider-response`，错误是 `empty-artifact`。供应商后来返回成功时会清掉先前的 `provider-failed`。旧记录里的 `cancelled` 且没有 `localStop` 时，读取视为本地停止，但仍按原任务号查询。本地停止不是远端停止。
 
 视频提交若没有任务号，状态是 `submit-unknown`，同一项目和幂等键不会再次创建。`cancel` 只把 `localStop` 设为真，并保留 `remoteTaskId`。之后 `resume` 仍查询该任务号，并写下 `providerStatus`。`remoteCancel` 为 `unverified`。这不是退款，也不表示远端已停止。

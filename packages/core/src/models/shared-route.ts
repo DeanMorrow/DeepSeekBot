@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { OperationalDatabaseModulePort } from '../database/owner.js';
+import { inspectImage } from '../media/image-format.js';
 
 export type ModelCapability = 'chat' | 'image' | 'video';
 export type ModelProtocol =
@@ -74,11 +75,15 @@ interface StoredInstance extends InstanceSpec {
 
 export interface StoredArtifact {
   kind: 'text' | 'base64' | 'untrusted-url' | 'raw-provider-response';
-  /** Present only for text or base64. Base64 is not labeled as png or mp4. */
+  /** Always false. Kind is not proof that a consumer may deliver the bytes. */
+  mediaVerified: false;
+  /** Present only for text or base64 that decoded. Not a delivery approval. */
   value?: string;
-  /** Provider URL copied as text. It is not fetched and is not a trusted artifact. */
+  /** http(s) text copied from the provider. It is not fetched. */
   url?: string;
   body?: string;
+  inspected?: { mime: string; width: number; height: number };
+  reason?: 'invalid-payload' | 'empty-artifact';
 }
 
 interface StoredTask {
@@ -289,9 +294,33 @@ export function createSharedModelRoute(
   const textField = (value: unknown): string | undefined =>
     typeof value === 'string' && value.trim() !== '' ? value : undefined;
 
+  const httpUrl = (value: string | undefined): string | undefined => {
+    if (value === undefined) return undefined;
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const imageBytes = (value: string | undefined): Uint8Array | undefined => {
+    if (value === undefined || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value) || value.length % 4 !== 0) {
+      return undefined;
+    }
+    const bytes = Buffer.from(value, 'base64');
+    if (bytes.length === 0 || bytes.toString('base64') !== value) return undefined;
+    try {
+      inspectImage(bytes);
+      return bytes;
+    } catch {
+      return undefined;
+    }
+  };
+
   const interpret = (protocol: ModelProtocol, json: unknown, raw: string): StoredArtifact => {
     if (typeof json !== 'object' || json === null) {
-      return { kind: 'raw-provider-response', body: raw };
+      return { kind: 'raw-provider-response', mediaVerified: false, body: raw };
     }
     const record = json as Record<string, unknown>;
     if (protocol === 'openai-images') {
@@ -299,19 +328,58 @@ export function createSharedModelRoute(
       const item =
         typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
       const encoded = textField(item.b64_json);
-      if (encoded !== undefined) return { kind: 'base64', value: encoded };
-      const url = textField(item.url);
-      if (url !== undefined) return { kind: 'untrusted-url', url };
-      return { kind: 'raw-provider-response', body: raw };
+      const bytes = imageBytes(encoded);
+      if (bytes !== undefined && encoded !== undefined) {
+        const inspected = inspectImage(bytes);
+        return {
+          kind: 'base64',
+          mediaVerified: false,
+          value: encoded,
+          inspected: { mime: inspected.mime, width: inspected.width, height: inspected.height },
+        };
+      }
+      if (encoded !== undefined) {
+        return {
+          kind: 'raw-provider-response',
+          mediaVerified: false,
+          body: raw,
+          reason: 'invalid-payload',
+        };
+      }
+      const url = httpUrl(textField(item.url));
+      if (url !== undefined) return { kind: 'untrusted-url', mediaVerified: false, url };
+      if (textField(item.url) !== undefined) {
+        return {
+          kind: 'raw-provider-response',
+          mediaVerified: false,
+          body: raw,
+          reason: 'invalid-payload',
+        };
+      }
+      return { kind: 'raw-provider-response', mediaVerified: false, body: raw };
     }
     if (protocol === 'apiyi-seedance' || protocol === 'openai-videos') {
       const content =
         typeof record.content === 'object' && record.content !== null
           ? (record.content as Record<string, unknown>)
           : {};
-      const url = textField(content.video_url) ?? textField(record.video_url);
-      if (url !== undefined) return { kind: 'untrusted-url', url };
-      return { kind: 'raw-provider-response', body: raw };
+      const videoText = textField(content.video_url) ?? textField(record.video_url);
+      const url = httpUrl(videoText);
+      if (url !== undefined) return { kind: 'untrusted-url', mediaVerified: false, url };
+      if (videoText !== undefined) {
+        return {
+          kind: 'raw-provider-response',
+          mediaVerified: false,
+          body: raw,
+          reason: 'invalid-payload',
+        };
+      }
+      return {
+        kind: 'raw-provider-response',
+        mediaVerified: false,
+        body: raw,
+        reason: 'empty-artifact',
+      };
     }
     if (protocol === 'anthropic-messages') {
       const blocks = Array.isArray(record.content) ? record.content : [];
@@ -325,8 +393,8 @@ export function createSharedModelRoute(
         )
         .filter((item): item is string => item !== undefined)
         .join('');
-      if (text !== '') return { kind: 'text', value: text };
-      return { kind: 'raw-provider-response', body: raw };
+      if (text !== '') return { kind: 'text', mediaVerified: false, value: text };
+      return { kind: 'raw-provider-response', mediaVerified: false, body: raw };
     }
     const choice = Array.isArray(record.choices) ? record.choices[0] : undefined;
     const message =
@@ -334,8 +402,13 @@ export function createSharedModelRoute(
         ? (choice as { message?: { content?: unknown } }).message
         : undefined;
     const content = textField(message?.content);
-    if (content !== undefined) return { kind: 'text', value: content };
-    return { kind: 'raw-provider-response', body: raw };
+    if (content !== undefined) return { kind: 'text', mediaVerified: false, value: content };
+    return {
+      kind: 'raw-provider-response',
+      mediaVerified: false,
+      body: raw,
+      reason: 'empty-artifact',
+    };
   };
 
   const saveTask = (task: StoredTask): void => {
@@ -357,7 +430,13 @@ export function createSharedModelRoute(
       const row = db
         .prepare('SELECT body FROM shared_model_tasks WHERE project_id = ? AND idempotency_key = ?')
         .get(projectId, idempotencyKey) as { body: string } | undefined;
-      return row === undefined ? undefined : (JSON.parse(row.body) as StoredTask);
+      if (row === undefined) return undefined;
+      const task = JSON.parse(row.body) as StoredTask;
+      if ((JSON.parse(row.body) as { status?: unknown }).status === 'cancelled') {
+        task.localStop = true;
+        task.status = task.remoteTaskId === null ? 'submit-unknown' : 'running';
+      }
+      return task;
     });
 
   return {
@@ -507,13 +586,13 @@ export function createSharedModelRoute(
         return task;
       }
       const artifact = interpret(instance.protocol, response.json, response.text);
+      task.artifact = artifact;
       if (artifact.kind === 'raw-provider-response') {
         task.status = 'failed';
-        task.error = 'empty-artifact';
-        task.artifact = artifact;
+        task.error = artifact.reason ?? 'empty-artifact';
       } else {
         task.status = 'completed';
-        task.artifact = artifact;
+        task.error = null;
       }
       saveTask(task);
       return task;
@@ -542,7 +621,7 @@ export function createSharedModelRoute(
         const artifact = interpret(task.protocol, response.json, response.text);
         task.artifact = artifact;
         task.status = artifact.kind === 'raw-provider-response' ? 'failed' : 'completed';
-        if (task.status === 'failed') task.error = 'empty-artifact';
+        task.error = task.status === 'failed' ? (artifact.reason ?? 'empty-artifact') : null;
       } else if (status === 'failed' || status === 'expired') {
         task.status = 'failed';
         task.error = 'provider-failed';
