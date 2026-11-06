@@ -2,6 +2,7 @@ import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools';
 
 import {
   attestationFromHostSession,
+  openAuthorizedOpsEntry,
   OPS_CATALOG_SOURCE,
   readAuthorizedOpsCatalog,
   type CatalogSessionProof,
@@ -202,6 +203,46 @@ export function createPackTools(botSlug: string, host: PackToolHost): ToolDefini
             };
           }),
         ),
+    }),
+    defineTool({
+      name: 'pack_catalog_open',
+      description:
+        'Open one ops catalog entry for this Host-registered Bot. Returns item names and briefs only. Does not read skill or document bodies, and does not use the Owner catalogOpen bridge.',
+      parameters: {
+        entryRef: {
+          type: 'string',
+          required: true,
+          description: 'Opaque ops:asset-catalog#id from pack_catalog. Not a filesystem path.',
+        },
+        actor: {
+          type: 'string',
+          description: 'Ignored unless it disagrees with the Host Bot, which is refused.',
+        },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const caller = `bot:${botSlug}`;
+        if (args.actor !== undefined && args.actor !== botSlug) {
+          return text({ ok: false, reason: 'actor-mismatch', caller, items: [] });
+        }
+        const entryRef = typeof args.entryRef === 'string' ? args.entryRef.trim() : '';
+        if (entryRef === '')
+          return text({ ok: false, reason: 'entry-required', caller, items: [] });
+        const proof = host.catalogSession?.();
+        const attested =
+          proof === undefined
+            ? undefined
+            : attestationFromHostSession(proof, { kind: 'bot', slug: botSlug });
+        const opened = openAuthorizedOpsEntry(
+          host.catalogSourcePath?.(),
+          attested ?? { source: 'host-bot', slug: botSlug, ownerId: '', sessionOwnerId: '' },
+          entryRef,
+        );
+        return text({ ...opened, caller });
+      },
     }),
     defineTool({
       name: 'pack_rollback',

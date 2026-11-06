@@ -418,3 +418,198 @@ describe('catalog metadata auth v1 frozen cases', () => {
     expect(registryPath).toContain('registry.json');
   });
 });
+
+function opsMemory(): string {
+  const memory = createTempRoot('catalog-bot-open-memory-');
+  mkdirSync(join(memory, '.botharness', 'catalog'), { recursive: true });
+  writeFileSync(
+    join(memory, '.botharness', 'catalog', 'index.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      version: 1,
+      inventories: [
+        {
+          id: 'ops',
+          authority: 'ops',
+          sourceRef: 'ops:asset-catalog',
+          version: 1,
+          status: 'active',
+        },
+      ],
+    }),
+  );
+  return memory;
+}
+
+function catalogWithAudiences(audiences: string[]): {
+  config: string;
+  registryPath: string;
+  entryRef: string;
+  bodyPath: string;
+} {
+  const root = createTempRoot('catalog-bot-open-');
+  const bodyPath = join(root, 'body.txt');
+  writeFileSync(bodyPath, 'SECRET-BODY');
+  writeFileSync(join(root, 'CONTRACT.md'), CONTRACT_TEXT);
+  writeFileSync(
+    join(root, 'entry.json'),
+    JSON.stringify({
+      registryId: 'syn-inv-a',
+      version: 1,
+      display: { audiences },
+      items: [{ id: 'i1', name: 'SYN-Item-1', brief: 'meta only', entry: 'body.txt' }],
+    }),
+  );
+  const registryPath = join(root, 'registry.json');
+  writeFileSync(
+    registryPath,
+    JSON.stringify({
+      sourceRef: 'ops:asset-catalog',
+      version: 1,
+      updatedAt: '2026-11-06T00:00:00.000Z',
+      privacy: PRIVACY,
+      contract: 'CONTRACT.md',
+      contract_version: '2',
+      display: { audiences },
+      inventories: [
+        {
+          id: 'syn-inv-a',
+          name: 'SYN-Name-A',
+          brief: 'SYN purpose A',
+          entry: 'entry.json',
+          status: 'active',
+          version: 1,
+          display: { audiences },
+        },
+      ],
+    }),
+  );
+  return {
+    config: configFor(registryPath, 'owner-a'),
+    registryPath,
+    entryRef: 'ops:asset-catalog#syn-inv-a',
+    bodyPath,
+  };
+}
+
+async function botCatalog(
+  slug: string,
+  sessionOwnerId: string,
+  ownedBotSlugs: readonly string[],
+  config: string,
+  entryRef: string,
+  actor?: string,
+): Promise<{ view: string; opened: string; schema: unknown }> {
+  const tools = createPackTools(slug, {
+    memoryDir: () => opsMemory(),
+    grant: () => undefined,
+    catalogSourcePath: () => config,
+    catalogSession: () => ({ sessionOwnerId, ownedBotSlugs }),
+  });
+  const viewTool = tools.find((item) => item.name === 'pack_catalog');
+  const openTool = tools.find((item) => item.name === 'pack_catalog_open');
+  const view = String(await viewTool?.execute(actor === undefined ? {} : { actor }, {} as never));
+  const opened = String(
+    await openTool?.execute(actor === undefined ? { entryRef } : { entryRef, actor }, {} as never),
+  );
+  return { view, opened, schema: openTool?.parameters };
+}
+
+describe('bot catalog open', () => {
+  it('lets two registered bots in this profile view and open metadata only', async () => {
+    const { config, entryRef, bodyPath } = catalogWithAudiences(['profile-owner', 'owner-bots']);
+    for (const slug of ['ada', 'bee']) {
+      const result = await botCatalog(slug, 'owner-a', ['ada', 'bee'], config, entryRef);
+      expect(result.schema).toMatchObject({
+        type: 'object',
+        properties: { entryRef: { type: 'string' } },
+        required: ['entryRef'],
+      });
+      expect(result.view).toContain('SYN-Name-A');
+      const opened = JSON.parse(result.opened) as {
+        ok: boolean;
+        caller: string;
+        items: Array<{ id: string; name: string; brief: string }>;
+      };
+      expect(opened.ok).toBe(true);
+      expect(opened.caller).toBe(`bot:${slug}`);
+      expect(opened.items).toEqual([{ id: 'i1', name: 'SYN-Item-1', brief: 'meta only' }]);
+      expect(result.opened).not.toContain('SECRET-BODY');
+      expect(result.opened).not.toContain(bodyPath);
+      expect(result.opened).not.toContain('profile-owner');
+    }
+  });
+
+  it('refuses owner-only, another bot, a forged actor, an unregistered slug, another profile, and a revoked entryRef', async () => {
+    const ownerOnly = catalogWithAudiences(['profile-owner']);
+    const hidden = await botCatalog(
+      'ada',
+      'owner-a',
+      ['ada', 'bee'],
+      ownerOnly.config,
+      ownerOnly.entryRef,
+    );
+    expect(hidden.opened).not.toContain('SYN-Item-1');
+    expect(JSON.parse(hidden.opened).caller).toBe('bot:ada');
+
+    const beeOnly = catalogWithAudiences(['bot:bee']);
+    const ada = await botCatalog(
+      'ada',
+      'owner-a',
+      ['ada', 'bee'],
+      beeOnly.config,
+      beeOnly.entryRef,
+    );
+    const bee = await botCatalog(
+      'bee',
+      'owner-a',
+      ['ada', 'bee'],
+      beeOnly.config,
+      beeOnly.entryRef,
+    );
+    expect(ada.opened).not.toContain('SYN-Item-1');
+    expect(JSON.parse(bee.opened).items).toEqual([
+      { id: 'i1', name: 'SYN-Item-1', brief: 'meta only' },
+    ]);
+
+    const shared = catalogWithAudiences(['owner-bots']);
+    const forged = await botCatalog(
+      'ada',
+      'owner-a',
+      ['ada'],
+      shared.config,
+      shared.entryRef,
+      'bee',
+    );
+    expect(JSON.parse(forged.opened).reason).toBe('actor-mismatch');
+    expect(forged.opened).not.toContain('SYN-Item-1');
+
+    const unregistered = await botCatalog(
+      'ada',
+      'owner-a',
+      ['bee'],
+      shared.config,
+      shared.entryRef,
+    );
+    expect(unregistered.opened).not.toContain('SYN-Item-1');
+
+    const otherProfile = await botCatalog(
+      'ada',
+      'profile-b',
+      ['ada'],
+      shared.config,
+      shared.entryRef,
+    );
+    expect(otherProfile.opened).not.toContain('SYN-Item-1');
+
+    const registry = JSON.parse(readFileSync(shared.registryPath, 'utf8')) as {
+      display: { audiences: string[] };
+    };
+    registry.display.audiences = [];
+    writeFileSync(shared.registryPath, JSON.stringify(registry));
+    const revoked = await botCatalog('ada', 'owner-a', ['ada'], shared.config, shared.entryRef);
+    expect(JSON.parse(revoked.opened).ok).toBe(false);
+    expect(revoked.opened).not.toContain('SYN-Item-1');
+    expect(revoked.view).not.toContain('SYN-Name-A');
+  });
+});

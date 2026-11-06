@@ -620,7 +620,7 @@ Each turn lists the tools the model called with bounded arguments, the outcome (
 
 ### Ops catalog
 
-`deepseekbot catalog` calls the live Host method `catalogView` as the authenticated Owner. `deepseekbot catalog-open <entryRef>` calls `catalogOpen`. The Host reads only `$DSH_HOME/botharness/catalog-source.json`. That file points at the official registry. The registry's `display.audiences` decides who may see it. `profile-owner` is this command. `bot:<slug>` is that Bot's `pack_catalog` only. A missing file is `unreachable`. A registry without `display` is `unauthorized`. Neither result is filled from a Bot memory catalog. `entryRef` is `ops:asset-catalog#<id>`. The reply omits filesystem paths.
+`deepseekbot catalog` calls the live Host method `catalogView` as the authenticated Owner. `deepseekbot catalog-open <entryRef>` calls `catalogOpen`. The Host reads only `$DSH_HOME/botharness/catalog-source.json`. That file points at the official registry. The registry's `display.audiences` decides who may see it. `profile-owner` is this command. `bot:<slug>` uses that Bot's `pack_catalog` and `pack_catalog_open`. `catalog-open` stays the Owner bridge and a Bot cannot call it to become the Owner. `printf '{"entryRef":"ops:asset-catalog#<id>"}' | deepseekbot bot-tool <bot-id> pack_catalog_open --args-stdin` opens item names and briefs for the registered Bot. A missing file is `unreachable`. A registry without `display` is `unauthorized`. Neither result is filled from a Bot memory catalog. `entryRef` is `ops:asset-catalog#<id>`. The reply omits filesystem paths.
 
 ### Harness Bot tools without the model
 

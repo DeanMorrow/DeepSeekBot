@@ -305,6 +305,7 @@ const BOT_TOOL_NAMES = new Set([
   'pack_migrate',
   'pack_rollback',
   'pack_catalog',
+  'pack_catalog_open',
   'list_assignment_models',
   'list_bot_subagent_models',
   'bot_subagent',

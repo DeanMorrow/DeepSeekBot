@@ -9,7 +9,7 @@
 
 ## 用法
 
-`deepseekbot catalog` 通过已认证 Owner 调用 Host 的 `catalogView`。`deepseekbot catalog-open <entryRef>` 调用 `catalogOpen`。Host 只读 `$DSH_HOME/botharness/catalog-source.json` 指向的正式 registry。谁能看由 registry 里的 `display.audiences` 决定：`profile-owner` 对应这条命令，`bot:<slug>` 只对应那个 Bot 的 `pack_catalog`。没有配置文件是 `unreachable`，没有 `display` 是 `unauthorized`。两种都不会用 Bot 记忆里的清单填上。`entryRef` 是 `ops:asset-catalog#<id>`，响应里没有文件系统路径。
+`deepseekbot catalog` 通过已认证 Owner 调用 Host 的 `catalogView`。`deepseekbot catalog-open <entryRef>` 调用 `catalogOpen`。Host 只读 `$DSH_HOME/botharness/catalog-source.json` 指向的正式 registry。谁能看由 registry 里的 `display.audiences` 决定：`profile-owner` 对应这条命令。`bot:<slug>` 用那个 Bot 的 `pack_catalog` 和 `pack_catalog_open`。`catalog-open` 仍是 Owner 桥，Bot 不能借它变成 Owner。`printf '{"entryRef":"ops:asset-catalog#<id>"}' | deepseekbot bot-tool <bot-id> pack_catalog_open --args-stdin` 为已登记 Bot 打开条目的名称和简介。没有配置文件是 `unreachable`，没有 `display` 是 `unauthorized`。两种都不会用 Bot 记忆里的清单填上。`entryRef` 是 `ops:asset-catalog#<id>`，响应里没有文件系统路径。
 
 ### 可恢复的 Zip 上传与导入
 
