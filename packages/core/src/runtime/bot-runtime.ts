@@ -162,6 +162,7 @@ import { DEFAULT_PROMPT_TEXT, type PromptText } from '../prompts/prompt-parts.js
 import { DEFAULT_PROMPT_LIMITS, type PromptLimits } from '../prompts/prompt-limits.js';
 import { isBotSubagentModelTool } from './subagent-model-tools.js';
 import { createSuperAgentLedger, type SuperAgentLedger } from './super-agent-ledger.js';
+import { createWorkOrderAuthority, type WorkOrderAuthority } from './super-agent-authority.js';
 
 export type AssignmentActivity = 'working' | 'idle' | 'error' | 'stopping' | 'stopped';
 export type AssignmentReportState =
@@ -452,6 +453,7 @@ export interface OrchestratorAgentRun {
   };
   assignments: OrchestratorAssignmentAccess;
   superAgent?: SuperAgentLedger;
+  workOrderAuthority?: WorkOrderAuthority;
   schedules?: {
     list(): BotSchedule[];
     create(input: BotScheduleInput): BotSchedule;
@@ -6226,6 +6228,7 @@ class BotRuntimeImplementation implements BotRuntime {
           }
         : {}),
       superAgent: createSuperAgentLedger(this.#database),
+      workOrderAuthority: createWorkOrderAuthority(this.#database),
       assignments: this.#assignmentAccess(
         bot,
         turn.sourceEventId,

@@ -3,6 +3,7 @@ import { PRIVATE_INPUT_TOOLS } from '../credentials/tool-contract.js';
 import { createBotMessageTool } from './bot-message-tool.js';
 import { createPackTools } from '../memory/host-pack-tools.js';
 import { cancelSuperAgentRun, runSuperAgent, sealWorkOrders } from './super-agent-dispatch.js';
+import { orchestratorToolScope, sealToolInput } from './super-agent-authority.js';
 import { assertOrchestratorWorkingDirectory } from './orchestrator-working-directory.js';
 import { TOB_CLI_PROMPT } from '../tob/service.js';
 import { AssignmentInboxAcceptanceUncertainError } from './assignment-delivery.js';
@@ -1493,25 +1494,48 @@ class DshBotAgentAdapter implements BotAgentAdapter {
             type: 'string',
             required: true,
             description:
-              'JSON array of {goal, steps, acceptance}. Authorization flags are refused.',
+              'JSON array of {goal, steps, acceptance}. Model-written text needs a Human approval or an exact saved rule. Authorization flags are refused.',
+          },
+          source_event_id: {
+            type: 'string',
+            description:
+              'Human message id. Every goal, step and acceptance must already be in that message.',
           },
         },
         output: {
           schema: { type: 'string' },
           render: (_args, value) => [{ type: 'text', text: value }],
         },
-        execute: async (args) => {
+        execute: async (args, context) => {
           const active = this.#runs.get(run.sessionId);
-          if (active?.role !== 'orchestrator' || active.run.superAgent === undefined) {
+          if (
+            active?.role !== 'orchestrator' ||
+            active.run.superAgent === undefined ||
+            active.run.workOrderAuthority === undefined
+          ) {
             throw new Error('super_agent_seal: durable ledger is unavailable');
           }
-          const sealed = sealWorkOrders(active.run.superAgent, {
-            botSlug: active.run.bot.slug,
-            sessionId: run.sessionId,
-            grantId: args.grant_id,
-            orders: args.work_orders,
-            now: new Date().toISOString(),
-          });
+          const toolInput = sealToolInput(args);
+          const sealed = sealWorkOrders(
+            active.run.superAgent,
+            {
+              botSlug: active.run.bot.slug,
+              sessionId: run.sessionId,
+              grantId: args.grant_id,
+              orders: args.work_orders,
+              now: new Date().toISOString(),
+              ...(args.source_event_id === undefined
+                ? {}
+                : { sourceEventId: args.source_event_id }),
+              scopeKey: orchestratorToolScope(
+                context.agent?.session.header.cwd ?? '',
+                active.run.assignments.grants(),
+              ),
+              approvalToken: String(context.token),
+              toolInput,
+            },
+            active.run.workOrderAuthority,
+          );
           return JSON.stringify(sealed);
         },
       }),

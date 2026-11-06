@@ -27,8 +27,15 @@ export function parseWorkOrders(value: unknown): WorkOrder[] | { reason: string 
   for (const item of parsed) {
     if (typeof item !== 'object' || item === null) return { reason: 'task-source-required' };
     const record = item as Record<string, unknown>;
-    if ('privateMemory' in record || 'rawParentText' in record)
+    if (
+      'privateMemory' in record ||
+      'rawParentText' in record ||
+      'approved' in record ||
+      'sourceKind' in record ||
+      'sourceRef' in record
+    ) {
       return { reason: 'forged-authorization' };
+    }
     const goal = typeof record.goal === 'string' ? record.goal.trim() : '';
     const acceptance = typeof record.acceptance === 'string' ? record.acceptance.trim() : '';
     const steps = Array.isArray(record.steps)
@@ -82,6 +89,8 @@ export function workOrderFingerprint(orders: readonly WorkOrder[]): string {
 
 export interface SealedWorkOrder extends WorkOrder {
   orderId: string;
+  sourceKind: string;
+  sourceRef: string;
 }
 
 export interface SuperAgentRunRow {
@@ -101,14 +110,20 @@ export function createSuperAgentLedger(database: OperationalDatabaseModulePort) 
       grantId: string;
       orders: WorkOrder[];
       now: string;
+      sourceKind: string;
+      sourceRef: string;
     }): { orderIds: string[] } {
+      if (input.sourceKind === '' || input.sourceRef === '') {
+        throw new Error('super-agent seal requires a host source');
+      }
       const orderIds = input.orders.map(() => randomUUID());
       database.transaction(
         (db) => {
           const insert = db.prepare(
             `INSERT INTO super_agent_orders (
-             order_id, bot_slug, session_id, grant_id, goal, steps_json, acceptance, sealed_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             order_id, bot_slug, session_id, grant_id, goal, steps_json, acceptance, sealed_at,
+             source_kind, source_ref
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           );
           input.orders.forEach((order, index) => {
             const orderId = orderIds[index];
@@ -122,6 +137,8 @@ export function createSuperAgentLedger(database: OperationalDatabaseModulePort) 
               JSON.stringify(order.steps),
               order.acceptance,
               input.now,
+              input.sourceKind,
+              input.sourceRef,
             );
           });
         },
@@ -142,7 +159,8 @@ export function createSuperAgentLedger(database: OperationalDatabaseModulePort) 
           (orderId) =>
             db
               .prepare(
-                `SELECT order_id, bot_slug, session_id, grant_id, goal, steps_json, acceptance
+                `SELECT order_id, bot_slug, session_id, grant_id, goal, steps_json, acceptance,
+                      source_kind, source_ref
                  FROM super_agent_orders WHERE order_id = ?`,
               )
               .get(orderId) as
@@ -154,6 +172,8 @@ export function createSuperAgentLedger(database: OperationalDatabaseModulePort) 
                   goal: string;
                   steps_json: string;
                   acceptance: string;
+                  source_kind: string;
+                  source_ref: string;
                 }
               | undefined,
         ),
@@ -170,6 +190,8 @@ export function createSuperAgentLedger(database: OperationalDatabaseModulePort) 
           goal: row.goal,
           steps: JSON.parse(row.steps_json) as string[],
           acceptance: row.acceptance,
+          sourceKind: row.source_kind,
+          sourceRef: row.source_ref,
         });
       }
       return orders;

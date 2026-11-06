@@ -1,4 +1,5 @@
 import type { AssignmentSummary, OrchestratorAssignmentAccess } from './bot-runtime.js';
+import { coveredByHumanMessage, type WorkOrderAuthority } from './super-agent-authority.js';
 import {
   newSuperAgentRunId,
   parseWorkOrders,
@@ -63,7 +64,8 @@ function childText(order: SealedWorkOrder, runId: string, grantId: string): stri
     'Steps:',
     steps,
     `Acceptance: ${order.acceptance}`,
-    `Authorization: Workspace Grant ${grantId} only. Private memory is not included. Parent chat text is not included.`,
+    `Authorization: Workspace Grant ${grantId} only.`,
+    `Source: ${order.sourceKind} ${order.sourceRef}`,
     `Order: ${order.orderId}`,
   ].join('\n');
 }
@@ -272,9 +274,47 @@ export function sealWorkOrders(
     grantId: string;
     orders: unknown;
     now: string;
+    sourceEventId?: string;
+    scopeKey: string;
+    approvalToken?: string;
+    toolInput: string;
   },
-): { orderIds: string[] } | { reason: string } {
+  authority: WorkOrderAuthority,
+): { orderIds: string[]; sourceKind: string; sourceRef: string } | { reason: string } {
+  if (!authority.grantActive(input.botSlug, input.grantId)) return { reason: 'grant-unauthorized' };
   const orders = parseWorkOrders(input.orders);
   if (!Array.isArray(orders)) return orders;
-  return ledger.seal({ ...input, orders });
+  const sourceEventId = input.sourceEventId?.trim() ?? '';
+  let sourceKind = '';
+  let sourceRef = '';
+  if (sourceEventId !== '') {
+    const message = authority.humanSource(input.botSlug, sourceEventId);
+    if (message === undefined) return { reason: 'source-not-found' };
+    if (!coveredByHumanMessage(message.body, orders)) return { reason: 'source-mismatch' };
+    sourceKind = 'human-message';
+    sourceRef = sourceEventId;
+  } else {
+    const rule = authority.standingExact(input.botSlug, input.scopeKey, input.toolInput);
+    const call =
+      rule === undefined ? authority.grantedCall(input.approvalToken, input.toolInput) : undefined;
+    if (rule !== undefined) {
+      sourceKind = 'approval-rule';
+      sourceRef = rule.ruleId;
+    } else if (call !== undefined) {
+      sourceKind = 'approval-call';
+      sourceRef = call.callId;
+    } else {
+      return { reason: 'approval-required' };
+    }
+  }
+  const sealed = ledger.seal({
+    botSlug: input.botSlug,
+    sessionId: input.sessionId,
+    grantId: input.grantId,
+    orders,
+    now: input.now,
+    sourceKind,
+    sourceRef,
+  });
+  return { ...sealed, sourceKind, sourceRef };
 }

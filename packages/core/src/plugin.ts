@@ -1,4 +1,9 @@
 import { BotNetworkDeliveryError } from './runtime/bot-network.js';
+import {
+  noteSuperAgentApproval,
+  orchestratorToolScope,
+  sealToolInput,
+} from './runtime/super-agent-authority.js';
 import type { AssignmentReportContent } from './runtime/assignment-report.js';
 import { createWindowZoomControl, WINDOW_ZOOM_CONTROL_PATH } from './window-zoom/control.js';
 import {
@@ -2235,12 +2240,7 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
         }
         return JSON.stringify(['assignment', cwd, grantId]);
       }
-      const activeIds = core.grants
-        .list(owner.botSlug)
-        .filter((grant) => grant.revokedAt === undefined)
-        .map((grant) => `${grant.id}:${grant.writeRevision ?? 0}`)
-        .sort();
-      return JSON.stringify(['orchestrator', cwd, activeIds]);
+      return orchestratorToolScope(cwd, core.grants.list(owner.botSlug));
     },
     {
       changed: (slug, count) => core.states.setApprovalCount(slug, count),
@@ -2591,6 +2591,23 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
         }
         if (!toolApproval.validAfterDecision(agent, execution.callId))
           return { kind: 'deny', reason: 'Approval rule scope changed' };
+        if (execution.name === 'super_agent_seal') {
+          const args =
+            typeof execution.arguments === 'object' && execution.arguments !== null
+              ? (execution.arguments as Record<string, unknown>)
+              : {};
+          noteSuperAgentApproval(
+            String(execution.token),
+            String(execution.callId),
+            sealToolInput({
+              grant_id: String(args.grant_id ?? ''),
+              work_orders: String(args.work_orders ?? ''),
+              ...(typeof args.source_event_id === 'string'
+                ? { source_event_id: args.source_event_id }
+                : {}),
+            }),
+          );
+        }
         if (toolApproval.remembered(agent, execution.callId)) rememberedStarts.add(execution.token);
         const guard = toolApproval.executionGuard(agent, execution.callId);
         if (!guard || !guard(execution.name, execution.arguments))

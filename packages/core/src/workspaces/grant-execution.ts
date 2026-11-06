@@ -297,7 +297,6 @@ export function borrowedAgentDenial(
 const BOT_TOOL_NAMES = new Set([
   'create_assignment',
   'super_agent_run',
-  'super_agent_seal',
   'super_agent_cancel',
   'pack_private_add',
   'pack_private_read',
@@ -392,6 +391,13 @@ export function requiresHumanToolApproval(
       (args as Record<string, unknown>).access !== 'read'
     );
   if (name === 'secret_cli' || name === 'secret_mcp_connect' || name === 'bot_create') return true;
+  if (name === 'super_agent_seal') {
+    const source =
+      typeof args === 'object' && args !== null
+        ? (args as Record<string, unknown>).source_event_id
+        : undefined;
+    return typeof source !== 'string' || source.trim() === '';
+  }
   return isDshGovernedTool(name) && requiresHumanDecision(policyInput(args), templateInUse);
 }
 

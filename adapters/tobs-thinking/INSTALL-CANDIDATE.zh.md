@@ -14,7 +14,7 @@ import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai
 
 ## 修正包
 
-不要安装 `1.6.1-fork.0e1461c18.1`、`1.6.1-fork.1c6ade932.1` 或 `1.6.1-fork.a90859f35.1`。当前包是 `1.6.1-fork.73b920dc3.1`，构建 HEAD `73b920dc3d1656a55a770ef499f3b8904786b1f3`，Core SHA256 `b9c511eb677e24722f655cfebf506711dbccce409960911b6b1c29dc911e3b43`，目录 `tobs-fork-73b920dc3`。派工只接受已封存的 order id。Host 创建可能产生模型费用。真模型和 Windows 未测。前三轮仍未通过。
+不要安装 `1.6.1-fork.0e1461c18.1`、`1.6.1-fork.1c6ade932.1`、`1.6.1-fork.a90859f35.1` 或 `1.6.1-fork.73b920dc3.1`。73b 的封存表不能当成批准。新包在构建后写入本段。Host 创建可能产生模型费用。真模型和 Windows 未测。前三轮和 73b 仍未通过。
 
 实际写入 dependencies 的是 8 个，不只下面曾经点名的 3 个：`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、`dsh-subagent`、`dsh-tool-bash`、`dsh-tool-pwsh`、`dsh-tools`。交付目录 `closure/` 有这 8 个 registry tarball，sha512 与 lock 一致。peer 不在其中。13 个产品包加这 8 个文件不是离线整包。
 

@@ -367,6 +367,11 @@ describe('Workspace Grant execution boundary', () => {
   it('does not treat an active Workspace Grant as approval for every child tool', () => {
     const state = fixture();
     expect(isDshGovernedTool('super_agent_run')).toBe(false);
+    expect(isDshGovernedTool('super_agent_seal')).toBe(true);
+    expect(requiresHumanToolApproval('super_agent_seal', { work_orders: '[]' })).toBe(true);
+    expect(requiresHumanToolApproval('super_agent_seal', { source_event_id: 'human-1' })).toBe(
+      false,
+    );
     expect(isDshGovernedTool('secret_cli')).toBe(true);
     expect(
       grantToolExecutionDenial(

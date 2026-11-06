@@ -2904,6 +2904,18 @@ const SUPER_AGENT_RUN_MIGRATION: SchemaMigration = {
   },
 };
 
+const SUPER_AGENT_SOURCE_MIGRATION: SchemaMigration = {
+  generation: 132,
+  module: 'super-agent',
+  description: 'Record the host source that authorized each super-agent work order',
+  migrate(database) {
+    database.exec(`
+      ALTER TABLE super_agent_orders ADD COLUMN source_kind TEXT NOT NULL DEFAULT '';
+      ALTER TABLE super_agent_orders ADD COLUMN source_ref TEXT NOT NULL DEFAULT '';
+    `);
+  },
+};
+
 const CHANNEL_CHANGE_LOG_MIGRATION: SchemaMigration = {
   generation: 130,
   module: 'messaging',
@@ -3230,4 +3242,5 @@ export const BOT_HARNESS_SCHEMA_PLAN = defineSchemaPlan([
   VOICE_SETTINGS_MIGRATION,
   CHANNEL_CHANGE_LOG_MIGRATION,
   SUPER_AGENT_RUN_MIGRATION,
+  SUPER_AGENT_SOURCE_MIGRATION,
 ]);
