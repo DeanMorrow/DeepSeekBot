@@ -9,6 +9,10 @@ import { PRIVATE_INPUT_TOOLS } from '../src/credentials/tool-contract.js';
 import { TAKEOVER_TOOLS } from '../src/takeover/contracts.js';
 
 import { createChannelStore } from '../src/channels/store.js';
+import {
+  grantToolExecutionDenial,
+  requiresHumanToolApproval,
+} from '../src/workspaces/grant-execution.js';
 import { attachOperationalModule, mountOperationalDatabase } from '../src/database/owner.js';
 import { BOT_HARNESS_SCHEMA_PLAN } from '../src/database/schema-plan.js';
 import { directToolTrace } from '../src/bots/tool-trace.js';
@@ -28,6 +32,49 @@ const repo = join(import.meta.dirname, '../../..');
 function botToolNamesFrom(source: string): string[] {
   const block = /const BOT_TOOL_NAMES = new Set\(\[([\s\S]*?)\]\)/.exec(source);
   return block === null ? [] : [...block[1]!.matchAll(/'([a-z_]+)'/g)].map((name) => name[1]!);
+}
+
+function approvalProbe() {
+  const sessionId = 'botharness-assignment';
+  const grantId = 'grant-1';
+  const cwd = '/tmp/grant-workspace';
+  const core = {
+    ownership: {
+      resolve: (id: string) =>
+        id === sessionId
+          ? {
+              sessionId,
+              botSlug: 'ada',
+              rootRole: 'assignment' as const,
+              parentSessionId: undefined,
+            }
+          : undefined,
+    },
+    runtime: {
+      getAssignment: () => ({
+        permission: {
+          grantId,
+          workspaceId: 'workspace-1',
+          primaryCwd: cwd,
+          mode: 'workspace-write',
+          approval: 'ask',
+          presetRevision: 0,
+        },
+      }),
+    },
+    grants: {
+      requireActive: () => ({ id: grantId, workspaceId: 'workspace-1', workspacePath: cwd }),
+      list: () => [],
+    },
+    registry: { memoryDirFor: () => '/tmp/memory', get: () => ({ slug: 'ada' }), list: () => [] },
+    hostTools: new Set<string>(),
+  } as never;
+  return {
+    core,
+    policy: { resolve: () => ({ mode: 'workspace-write' }) } as never,
+    approval: { overrideOf: () => 'ask' } as never,
+    assignment: { id: sessionId, header: { cwd } } as never,
+  };
 }
 
 function setup() {
@@ -286,7 +333,48 @@ describe('direct Bot tool runner', () => {
         )
         .sort(),
     );
-    expect(listed.every((name) => botTools.includes(name))).toBe(true);
+    // BOT_TOOL_NAMES is the grant-execution exemption list, not the visible list.
+    // The retired check `listed.every(name => botTools.includes(name))` stays red in
+    // the 9d6 audit logs. It is not rewritten to false and seal is not added to the set.
+    const visibleNotExempt = listed.filter((name) => !botTools.includes(name)).sort();
+    expect(visibleNotExempt).toContain('super_agent_seal');
+    expect(botTools).not.toContain('super_agent_seal');
+    expect(listed).toEqual(expect.arrayContaining(['pack_catalog', 'pack_catalog_open']));
+    expect(botTools).toEqual(expect.arrayContaining(['pack_catalog', 'pack_catalog_open']));
+    const openTool = runtime.directBotTools!().find((tool) => tool.name === 'pack_catalog_open');
+    expect(openTool?.inputSchema).toMatchObject({
+      type: 'object',
+      properties: { entryRef: { type: 'string' } },
+      required: ['entryRef'],
+    });
+    const session = approvalProbe();
+    for (const name of visibleNotExempt) {
+      expect(requiresHumanToolApproval(name), name).toBe(true);
+      expect(
+        grantToolExecutionDenial(
+          session.core,
+          session.assignment,
+          session.policy,
+          session.approval,
+          name,
+          {},
+          false,
+        ),
+        name,
+      ).toBe(`${name} requires Human approval`);
+      expect(
+        grantToolExecutionDenial(
+          session.core,
+          session.assignment,
+          session.policy,
+          session.approval,
+          name,
+          {},
+          true,
+        ),
+        name,
+      ).toBeUndefined();
+    }
     expect(botTools).toContain('cloud_work');
     expect(exempt).not.toContain('cloud_work');
     expect(readFileSync(join(repo, 'packages/core/src/bots/cli-live.ts'), 'utf8')).toContain(
