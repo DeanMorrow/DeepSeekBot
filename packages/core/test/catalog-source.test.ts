@@ -272,4 +272,112 @@ describe('authorized ops catalog source', () => {
     expect(opened.status).toBe('unreachable');
     expect(opened.items).toEqual([]);
   });
+
+  it('intersects root permission with narrower category and entry rules', () => {
+    const root = createTempRoot('catalog-source-');
+    const updatedAt = '2026-11-06T00:00:00.000Z';
+    const config = writeRegistry(root, {
+      ...REGISTRY,
+      display: { audiences: ['profile-owner', 'bot:ada', 'bot:bee'] },
+      inventories: [
+        REGISTRY.inventories[0],
+        {
+          id: 'hidden-cat',
+          brief: '私有分类标题',
+          visibility: 'private',
+          entry: null,
+          status: 'unpopulated',
+          version: 1,
+          updatedAt,
+        },
+        {
+          id: 'ada-only',
+          brief: '只给 ada',
+          audiences: ['bot:ada'],
+          entry: null,
+          status: 'unpopulated',
+          version: 1,
+          updatedAt,
+        },
+        {
+          id: 'unknown',
+          brief: '未知覆盖',
+          public: true,
+          entry: null,
+          status: 'unpopulated',
+          version: 1,
+          updatedAt,
+        },
+      ],
+    });
+    writeFileSync(
+      join(root, 'official', 'skills.json'),
+      JSON.stringify({
+        registryId: 'skills',
+        version: 2,
+        items: [
+          { id: 'skill-a', name: 'Skill A', brief: '一项技能' },
+          { id: 'hidden', name: '私有标题', brief: '私有用途', visibility: 'private' },
+          { id: 'ada-item', name: 'Ada item', brief: '仅 ada', audiences: ['bot:ada'] },
+          { id: 'mystery', name: '神秘标题', brief: '未知字段', grant: true },
+        ],
+      }),
+    );
+    const ada = readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'ada' });
+    expect(ada.inventories.map((item) => item.id)).toEqual(['skills', 'ada-only']);
+    expect(JSON.stringify(ada)).not.toContain('私有分类标题');
+    expect(JSON.stringify(ada)).not.toContain('未知覆盖');
+    const adaOpen = openAuthorizedOpsEntry(
+      config,
+      { kind: 'bot', slug: 'ada' },
+      'ops:asset-catalog#skills',
+    );
+    expect(adaOpen.items.map((item) => item.id)).toEqual(['skill-a', 'ada-item']);
+    expect(JSON.stringify(adaOpen)).not.toContain('私有标题');
+    expect(JSON.stringify(adaOpen)).not.toContain('神秘标题');
+    const bee = readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'bee' });
+    expect(bee.inventories.map((item) => item.id)).toEqual(['skills']);
+    const beeOpen = openAuthorizedOpsEntry(
+      config,
+      { kind: 'bot', slug: 'bee' },
+      'ops:asset-catalog#skills',
+    );
+    expect(beeOpen.items.map((item) => item.id)).toEqual(['skill-a']);
+    const owner = readAuthorizedOpsCatalog(config, { kind: 'profile-owner' });
+    expect(owner.inventories.map((item) => item.id)).toEqual(['skills']);
+    const ownerOpen = openAuthorizedOpsEntry(
+      config,
+      { kind: 'profile-owner' },
+      'ops:asset-catalog#skills',
+    );
+    expect(ownerOpen.items.map((item) => item.id)).toEqual(['skill-a']);
+    writeFileSync(
+      join(root, 'official', 'skills.json'),
+      JSON.stringify({
+        registryId: 'skills',
+        version: 2,
+        visibility: 'private',
+        items: [{ id: 'skill-a', name: 'Skill A', brief: '一项技能' }],
+      }),
+    );
+    const hiddenFile = readAuthorizedOpsCatalog(config, { kind: 'bot', slug: 'ada' });
+    expect(hiddenFile.inventories.map((item) => item.id)).toEqual(['ada-only']);
+    expect(JSON.stringify(hiddenFile)).not.toContain('技能简介');
+    const hiddenOpen = openAuthorizedOpsEntry(
+      config,
+      { kind: 'bot', slug: 'ada' },
+      'ops:asset-catalog#skills',
+    );
+    expect(hiddenOpen.status).toBe('unauthorized');
+    expect(hiddenOpen.items).toEqual([]);
+    expect(JSON.stringify(hiddenOpen)).not.toContain('一项技能');
+    const ownerOnly = writeRegistry(root, {
+      ...REGISTRY,
+      display: { audiences: ['profile-owner'] },
+    });
+    expect(readAuthorizedOpsCatalog(ownerOnly, { kind: 'bot', slug: 'ada' }).status).toBe(
+      'unauthorized',
+    );
+    expect(readAuthorizedOpsCatalog(ownerOnly, { kind: 'profile-owner' }).status).toBe('active');
+  });
 });

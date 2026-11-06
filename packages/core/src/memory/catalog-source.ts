@@ -100,12 +100,119 @@ function empty(caller: CatalogCaller, status: CatalogSourceView['status']): Cata
   return { ok: true, ...view, fingerprint: fingerprint(view) };
 }
 
+const CATEGORY_FIELDS = new Set([
+  'id',
+  'brief',
+  'name',
+  'version',
+  'updatedAt',
+  'entry',
+  'status',
+  'sourceRef',
+  'owner',
+  'visibility',
+  'private',
+  'display',
+  'audiences',
+]);
+const ENTRY_FILE_FIELDS = new Set([
+  'registryId',
+  'version',
+  'updatedAt',
+  'items',
+  'sourceRef',
+  'visibility',
+  'private',
+  'display',
+  'audiences',
+]);
+const ITEM_FIELDS = new Set([
+  'id',
+  'name',
+  'brief',
+  'visibility',
+  'private',
+  'display',
+  'audiences',
+]);
+const ROOT_FIELDS = new Set([
+  'schemaVersion',
+  'sourceRef',
+  'version',
+  'updatedAt',
+  'display',
+  'inventories',
+  'id',
+  'role',
+  'entry',
+  'owner',
+  'brief',
+  'status',
+  'revisions',
+]);
+
+function knownAudience(value: unknown): value is string {
+  return (
+    value === 'profile-owner' ||
+    (typeof value === 'string' && /^bot:[a-z0-9][a-z0-9-]{0,63}$/.test(value))
+  );
+}
+
+function audienceNames(value: unknown): string[] | 'absent' | 'deny' {
+  if (value === undefined) return 'absent';
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => !knownAudience(item))) {
+    return 'deny';
+  }
+  return value;
+}
+
+function callerAudience(caller: CatalogCaller): string {
+  return caller.kind === 'profile-owner' ? 'profile-owner' : `bot:${caller.slug}`;
+}
+
+function layerAudiences(record: Record<string, unknown>): string[] | 'inherit' | 'deny' {
+  if (record.visibility === 'private' || record.private === true) return 'deny';
+  if ('visibility' in record && record.visibility !== 'private' && record.visibility !== 'public') {
+    return 'deny';
+  }
+  if ('private' in record && typeof record.private !== 'boolean') return 'deny';
+  const direct = audienceNames(record.audiences);
+  if (direct === 'deny') return 'deny';
+  if (record.display === undefined) return direct === 'absent' ? 'inherit' : direct;
+  if (
+    typeof record.display !== 'object' ||
+    record.display === null ||
+    Array.isArray(record.display)
+  ) {
+    return 'deny';
+  }
+  const display = record.display as Record<string, unknown>;
+  if (Object.keys(display).some((key) => key !== 'audiences')) return 'deny';
+  const nested = audienceNames(display.audiences);
+  if (nested === 'deny' || nested === 'absent') return 'deny';
+  if (direct === 'absent') return nested;
+  return nested.filter((audience) => direct.includes(audience));
+}
+
+function admits(
+  record: Record<string, unknown>,
+  known: Set<string>,
+  caller: CatalogCaller,
+): boolean {
+  if (Object.keys(record).some((key) => !known.has(key))) return false;
+  const layer = layerAudiences(record);
+  if (layer === 'deny') return false;
+  if (layer === 'inherit') return true;
+  return layer.includes(callerAudience(caller));
+}
+
 function allowed(display: unknown, caller: CatalogCaller): boolean {
-  if (typeof display !== 'object' || display === null) return false;
-  const audiences = (display as { audiences?: unknown }).audiences;
-  if (!Array.isArray(audiences)) return false;
-  const expected = caller.kind === 'profile-owner' ? 'profile-owner' : `bot:${caller.slug}`;
-  return audiences.some((audience) => audience === expected);
+  if (typeof display !== 'object' || display === null || Array.isArray(display)) return false;
+  const record = display as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== 'audiences')) return false;
+  const audiences = audienceNames(record.audiences);
+  if (audiences === 'absent' || audiences === 'deny') return false;
+  return audiences.includes(callerAudience(caller));
 }
 
 function readJson(path: string): unknown {
@@ -143,6 +250,7 @@ interface RegistryInventory {
   updatedAt: string | null;
   entry: string | null;
   status: string;
+  record: Record<string, unknown>;
 }
 
 function inventoriesOf(value: unknown): RegistryInventory[] | undefined {
@@ -158,13 +266,13 @@ function inventoriesOf(value: unknown): RegistryInventory[] | undefined {
       return undefined;
     if (seen.has(record.id)) return undefined;
     seen.add(record.id);
-    if (record.visibility === 'private' || record.private === true) continue;
     const brief = cleanText(record.brief, 160) ?? null;
     parsed.push({
       id: record.id,
       brief,
       briefRejected:
         typeof record.brief === 'string' && record.brief.trim() !== '' && brief === null,
+      record,
       version: typeof record.version === 'number' ? record.version : null,
       updatedAt: cleanText(record.updatedAt, 40) ?? null,
       entry: typeof record.entry === 'string' ? record.entry : null,
@@ -222,6 +330,7 @@ function loadRegistry(configPath: string):
   const body = registry as Record<string, unknown>;
   if (body.sourceRef !== undefined && body.sourceRef !== OPS_CATALOG_SOURCE)
     return { status: 'invalid' };
+  if (Object.keys(body).some((key) => !ROOT_FIELDS.has(key))) return { status: 'invalid' };
   const inventories = inventoriesOf(registry);
   if (inventories === undefined) return { status: 'invalid' };
   return {
@@ -233,6 +342,19 @@ function loadRegistry(configPath: string):
     display: body.display,
     inventories,
   };
+}
+
+function entryFileAdmits(root: string, entry: string | null, caller: CatalogCaller): boolean {
+  if (entry === null) return true;
+  const file = containedFile(root, entry);
+  if (file === undefined) return true;
+  try {
+    const parsed = readJson(file);
+    if (typeof parsed !== 'object' || parsed === null) return false;
+    return admits(parsed as Record<string, unknown>, ENTRY_FILE_FIELDS, caller);
+  } catch {
+    return false;
+  }
 }
 
 function categoryView(root: string, row: RegistryInventory): CatalogInventoryView {
@@ -278,7 +400,11 @@ export function readAuthorizedOpsCatalog(
   const loaded = loadRegistry(configPath);
   if (loaded.status !== 'ready') return empty(caller, loaded.status);
   if (!allowed(loaded.display, caller)) return empty(caller, 'unauthorized');
-  const inventories = loaded.inventories.map((row) => categoryView(loaded.root, row));
+  const inventories = loaded.inventories.flatMap((row) =>
+    admits(row.record, CATEGORY_FIELDS, caller) && entryFileAdmits(loaded.root, row.entry, caller)
+      ? [categoryView(loaded.root, row)]
+      : [],
+  );
   const view = {
     caller: callerLabel(caller),
     sourceRef: OPS_CATALOG_SOURCE,
@@ -322,7 +448,7 @@ export function openAuthorizedOpsEntry(
   if (file === undefined) return { ...refused, reason: 'unreachable', status: 'unreachable' };
   const parsed = readJson(file) as { items?: Array<Record<string, unknown>> };
   const items = (parsed.items ?? []).flatMap((item) => {
-    if (item.visibility === 'private' || item.private === true) return [];
+    if (!admits(item, ITEM_FIELDS, caller)) return [];
     const id = cleanText(item.id, 64);
     const name = cleanText(item.name, 80);
     const brief = cleanText(item.brief, 160);
