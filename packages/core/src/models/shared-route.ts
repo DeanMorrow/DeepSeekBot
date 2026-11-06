@@ -1,0 +1,442 @@
+import { randomUUID } from 'node:crypto';
+
+import type { OperationalDatabaseModulePort } from '../database/owner.js';
+
+export type ModelCapability = 'chat' | 'image' | 'video';
+export type ModelProtocol = 'openai-chat' | 'openai-images' | 'openai-videos' | 'official-native';
+export type ModelGateway = 'apiyi' | 'official';
+export type RouteConsumer = 'chat' | 'concept-art';
+
+export interface SecretStore {
+  put(id: string, key: string): Promise<void>;
+  configured(id: string): Promise<boolean>;
+  read(id: string): Promise<string | undefined>;
+}
+
+export interface PublicInstance {
+  id: string;
+  gateway: ModelGateway;
+  vendor: string;
+  capability: ModelCapability;
+  protocol: ModelProtocol;
+  baseUrl: string;
+  models: string[];
+  credentialConfigured: boolean;
+}
+
+export interface InstanceSpec {
+  id: string;
+  gateway: ModelGateway;
+  vendor: string;
+  capability: ModelCapability;
+  protocol: ModelProtocol;
+  baseUrl: string;
+  models: readonly string[];
+}
+
+const APIYI_BASE = 'https://api.apiyi.com/v1';
+
+const PROTOCOL_CAPABILITY: Record<ModelProtocol, ModelCapability | 'official'> = {
+  'openai-chat': 'chat',
+  'openai-images': 'image',
+  'openai-videos': 'video',
+  'official-native': 'official',
+};
+
+export class SharedRouteError extends Error {
+  constructor(
+    readonly reason: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'SharedRouteError';
+  }
+}
+
+interface StoredInstance extends InstanceSpec {
+  createdAt: string;
+}
+
+interface StoredTask {
+  id: string;
+  projectId: string;
+  idempotencyKey: string;
+  providerId: string;
+  capability: ModelCapability;
+  protocol: ModelProtocol;
+  model: string;
+  remoteTaskId: string | null;
+  status: 'submit-unknown' | 'running' | 'completed' | 'failed' | 'cancelled';
+  artifact: { mediaType: string; body: string } | null;
+  error: string | null;
+  remoteCancel: 'unverified';
+}
+
+function cleanId(value: string, label: string): string {
+  const text = value.trim();
+  if (text === '' || text.length > 80 || !/^[a-z0-9][a-z0-9._-]*$/u.test(text)) {
+    throw new SharedRouteError(
+      'invalid-input',
+      `${label} is empty or uses unsupported characters.`,
+    );
+  }
+  return text;
+}
+
+function assertProtocol(spec: InstanceSpec): void {
+  if (spec.gateway === 'apiyi') {
+    if (spec.protocol === 'official-native') {
+      throw new SharedRouteError('protocol-mismatch', 'API易 needs one of its verified protocols.');
+    }
+    if (PROTOCOL_CAPABILITY[spec.protocol] !== spec.capability) {
+      throw new SharedRouteError(
+        'protocol-mismatch',
+        'That API易 protocol does not serve this capability.',
+      );
+    }
+    if (spec.baseUrl !== APIYI_BASE) {
+      throw new SharedRouteError(
+        'protocol-mismatch',
+        'API易 verified calls use https://api.apiyi.com/v1.',
+      );
+    }
+    return;
+  }
+  if (spec.protocol !== 'official-native') {
+    throw new SharedRouteError(
+      'protocol-mismatch',
+      'An official instance cannot use an API易 protocol.',
+    );
+  }
+  if (!spec.baseUrl.startsWith('https://')) {
+    throw new SharedRouteError('invalid-input', 'An official base URL must start with https://.');
+  }
+}
+
+export function createMemorySecretStore(): SecretStore {
+  const keys = new Map<string, string>();
+  return {
+    async put(id, key) {
+      keys.set(id, key);
+    },
+    async configured(id) {
+      return keys.has(id) && keys.get(id) !== '';
+    },
+    async read(id) {
+      return keys.get(id);
+    },
+  };
+}
+
+export function createSharedModelRoute(
+  database: OperationalDatabaseModulePort,
+  secrets: SecretStore,
+  options: { fetch?: typeof fetch; now?: () => string } = {},
+) {
+  const now = options.now ?? (() => new Date().toISOString());
+  const fetchImpl = options.fetch ?? fetch;
+
+  const readInstance = (id: string): StoredInstance | undefined =>
+    database.read((db) => {
+      const row = db.prepare('SELECT body FROM shared_model_instances WHERE id = ?').get(id) as
+        | { body: string }
+        | undefined;
+      return row === undefined ? undefined : (JSON.parse(row.body) as StoredInstance);
+    });
+
+  const publicInstance = async (stored: StoredInstance): Promise<PublicInstance> => ({
+    id: stored.id,
+    gateway: stored.gateway,
+    vendor: stored.vendor,
+    capability: stored.capability,
+    protocol: stored.protocol,
+    baseUrl: stored.baseUrl,
+    models: [...stored.models],
+    credentialConfigured: await secrets.configured(stored.id),
+  });
+
+  const assertConsumer = (consumer: RouteConsumer, capability: ModelCapability): void => {
+    if (consumer === 'chat' && capability !== 'chat') {
+      throw new SharedRouteError('capability-mismatch', 'Chat cannot use an image or video model.');
+    }
+    if (consumer === 'concept-art' && capability === 'chat') {
+      throw new SharedRouteError('capability-mismatch', 'Concept art cannot use a chat model.');
+    }
+  };
+
+  const requireRoute = async (
+    consumer: RouteConsumer,
+    capability: ModelCapability,
+    mode: 'locked' | 'auto',
+  ): Promise<{ instance: StoredInstance; model: string }> => {
+    assertConsumer(consumer, capability);
+    const lock = database.read((db) => {
+      const row = db
+        .prepare(
+          'SELECT provider_id, model FROM shared_model_locks WHERE consumer = ? AND capability = ?',
+        )
+        .get(consumer, capability) as { provider_id: string; model: string } | undefined;
+      return row;
+    });
+    if (lock !== undefined || mode === 'locked') {
+      if (lock === undefined) {
+        throw new SharedRouteError('unconfigured', 'No model is locked for this consumer.');
+      }
+      const instance = readInstance(lock.provider_id);
+      if (instance === undefined || instance.capability !== capability) {
+        throw new SharedRouteError('unconfigured', 'The locked model is not available.');
+      }
+      if (!instance.models.includes(lock.model)) {
+        throw new SharedRouteError(
+          'model-not-allowed',
+          'The locked model is not on the allowlist.',
+        );
+      }
+      if (!(await secrets.configured(instance.id))) {
+        throw new SharedRouteError('credential-missing', 'The locked provider has no key.');
+      }
+      return { instance, model: lock.model };
+    }
+    const rows = database.read(
+      (db) => db.prepare('SELECT body FROM shared_model_instances').all() as { body: string }[],
+    );
+    const ready: Array<{ instance: StoredInstance }> = [];
+    for (const row of rows) {
+      const instance = JSON.parse(row.body) as StoredInstance;
+      if (instance.capability !== capability || instance.models.length === 0) continue;
+      if (await secrets.configured(instance.id)) ready.push({ instance });
+    }
+    const gateways = new Set(ready.map((item) => item.instance.gateway));
+    if (ready.length === 0) {
+      throw new SharedRouteError('unconfigured', 'No configured model serves this capability.');
+    }
+    if (ready.length !== 1 || gateways.size !== 1) {
+      throw new SharedRouteError('auto-ambiguous', 'Auto will not choose across providers.');
+    }
+    const only = ready[0]!;
+    if (only.instance.models.length !== 1) {
+      throw new SharedRouteError('auto-ambiguous', 'Auto will not choose among models.');
+    }
+    return { instance: only.instance, model: only.instance.models[0]! };
+  };
+
+  const authorizedFetch = async (
+    instance: StoredInstance,
+    path: string,
+    init: { method: string; body?: string },
+  ): Promise<{ status: number; json: unknown | undefined; text: string }> => {
+    const key = await secrets.read(instance.id);
+    if (key === undefined || key === '') {
+      throw new SharedRouteError('credential-missing', 'The provider has no key.');
+    }
+    let response: Response;
+    try {
+      response = await fetchImpl(`${instance.baseUrl}${path}`, {
+        method: init.method,
+        headers: {
+          authorization: `Bearer ${key}`,
+          'content-type': 'application/json',
+        },
+        ...(init.body === undefined ? {} : { body: init.body }),
+      });
+    } catch {
+      return { status: 0, json: undefined, text: '' };
+    }
+    const text = await response.text();
+    try {
+      return { status: response.status, json: JSON.parse(text) as unknown, text };
+    } catch {
+      return { status: response.status, json: undefined, text };
+    }
+  };
+
+  const saveTask = (task: StoredTask): void => {
+    database.transaction(
+      (db) =>
+        db
+          .prepare(
+            `INSERT INTO shared_model_tasks (id, project_id, idempotency_key, body, created_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(project_id, idempotency_key) DO UPDATE SET body = excluded.body`,
+          )
+          .run(task.id, task.projectId, task.idempotencyKey, JSON.stringify(task), now()),
+      ['shared-model'],
+    );
+  };
+
+  const readTask = (projectId: string, idempotencyKey: string): StoredTask | undefined =>
+    database.read((db) => {
+      const row = db
+        .prepare('SELECT body FROM shared_model_tasks WHERE project_id = ? AND idempotency_key = ?')
+        .get(projectId, idempotencyKey) as { body: string } | undefined;
+      return row === undefined ? undefined : (JSON.parse(row.body) as StoredTask);
+    });
+
+  return {
+    async saveInstance(spec: InstanceSpec, key?: string): Promise<PublicInstance> {
+      const stored: StoredInstance = {
+        id: cleanId(spec.id, 'Instance id'),
+        gateway: spec.gateway,
+        vendor: cleanId(spec.vendor, 'Vendor'),
+        capability: spec.capability,
+        protocol: spec.protocol,
+        baseUrl: spec.baseUrl.trim(),
+        models: [...new Set(spec.models.map((model) => cleanId(model, 'Model')))],
+        createdAt: now(),
+      };
+      assertProtocol(stored);
+      if (key !== undefined) {
+        if (key.trim() === '') throw new SharedRouteError('invalid-input', 'The key is empty.');
+        await secrets.put(stored.id, key);
+      }
+      database.transaction(
+        (db) =>
+          db
+            .prepare(
+              `INSERT INTO shared_model_instances (id, body, created_at) VALUES (?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET body = excluded.body`,
+            )
+            .run(stored.id, JSON.stringify(stored), stored.createdAt),
+        ['shared-model'],
+      );
+      return publicInstance(stored);
+    },
+    async listInstances(): Promise<PublicInstance[]> {
+      const rows = database.read(
+        (db) => db.prepare('SELECT body FROM shared_model_instances').all() as { body: string }[],
+      );
+      const listed: PublicInstance[] = [];
+      for (const row of rows)
+        listed.push(await publicInstance(JSON.parse(row.body) as StoredInstance));
+      return listed;
+    },
+    lock(consumer: RouteConsumer, capability: ModelCapability, providerId: string, model: string) {
+      const instance = readInstance(providerId);
+      if (
+        instance === undefined ||
+        instance.capability !== capability ||
+        !instance.models.includes(model)
+      ) {
+        throw new SharedRouteError(
+          'model-not-allowed',
+          'That model is not allowed on this instance.',
+        );
+      }
+      database.transaction(
+        (db) =>
+          db
+            .prepare(
+              `INSERT INTO shared_model_locks (consumer, capability, provider_id, model)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(consumer, capability) DO UPDATE SET
+                 provider_id = excluded.provider_id, model = excluded.model`,
+            )
+            .run(consumer, capability, providerId, model),
+        ['shared-model'],
+      );
+    },
+    resolve: requireRoute,
+    async submit(
+      consumer: RouteConsumer,
+      capability: ModelCapability,
+      projectId: string,
+      idempotencyKey: string,
+      prompt: string,
+    ): Promise<StoredTask> {
+      const existing = readTask(projectId, idempotencyKey);
+      if (existing !== undefined) return existing;
+      const { instance, model } = await requireRoute(consumer, capability, 'auto');
+      const task: StoredTask = {
+        id: randomUUID(),
+        projectId,
+        idempotencyKey,
+        providerId: instance.id,
+        capability,
+        protocol: instance.protocol,
+        model,
+        remoteTaskId: null,
+        status: 'submit-unknown',
+        artifact: null,
+        error: null,
+        remoteCancel: 'unverified',
+      };
+      saveTask(task);
+      if (capability === 'video') {
+        const response = await authorizedFetch(instance, '/videos', {
+          method: 'POST',
+          body: JSON.stringify({ model, prompt, seconds: '4' }),
+        });
+        const remoteId =
+          typeof response.json === 'object' &&
+          response.json !== null &&
+          typeof (response.json as { id?: unknown }).id === 'string'
+            ? (response.json as { id: string }).id
+            : undefined;
+        if (response.status !== 200 || remoteId === undefined) return task;
+        task.remoteTaskId = remoteId;
+        task.status = 'running';
+        saveTask(task);
+        return task;
+      }
+      const path = capability === 'chat' ? '/chat/completions' : '/images/generations';
+      const body =
+        capability === 'chat'
+          ? { model, messages: [{ role: 'user', content: prompt }] }
+          : { model, prompt };
+      const response = await authorizedFetch(instance, path, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      if (response.status === 0 || response.json === undefined) return task;
+      if (response.status !== 200) {
+        task.status = 'failed';
+        task.error = 'provider-rejected';
+        saveTask(task);
+        return task;
+      }
+      task.status = 'completed';
+      task.artifact = {
+        mediaType: capability === 'chat' ? 'application/json' : 'image/png',
+        body: response.text,
+      };
+      saveTask(task);
+      return task;
+    },
+    async resume(projectId: string, idempotencyKey: string): Promise<StoredTask> {
+      const task = readTask(projectId, idempotencyKey);
+      if (task === undefined)
+        throw new SharedRouteError('wrong-project', 'No task belongs to this project.');
+      if (task.status === 'submit-unknown' || task.remoteTaskId === null) return task;
+      if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+        return task;
+      }
+      const instance = readInstance(task.providerId);
+      if (instance === undefined)
+        throw new SharedRouteError('unconfigured', 'The provider is gone.');
+      const response = await authorizedFetch(instance, `/videos/${task.remoteTaskId}`, {
+        method: 'GET',
+      });
+      const status =
+        typeof response.json === 'object' && response.json !== null
+          ? (response.json as { status?: unknown }).status
+          : undefined;
+      if (status === 'completed') {
+        task.status = 'completed';
+        task.artifact = { mediaType: 'video/mp4', body: response.text };
+      } else if (status === 'failed') {
+        task.status = 'failed';
+        task.error = 'provider-failed';
+      }
+      saveTask(task);
+      return task;
+    },
+    cancel(projectId: string, idempotencyKey: string): StoredTask {
+      const task = readTask(projectId, idempotencyKey);
+      if (task === undefined)
+        throw new SharedRouteError('wrong-project', 'No task belongs to this project.');
+      if (task.status === 'running' || task.status === 'submit-unknown') task.status = 'cancelled';
+      saveTask(task);
+      return task;
+    },
+  };
+}

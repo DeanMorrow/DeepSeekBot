@@ -2904,6 +2904,36 @@ const SUPER_AGENT_RUN_MIGRATION: SchemaMigration = {
   },
 };
 
+const SHARED_MODEL_MIGRATION: SchemaMigration = {
+  generation: 133,
+  module: 'shared-model',
+  description: 'Persist shared model instances, consumer locks and media task ids',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE shared_model_instances (
+        id TEXT PRIMARY KEY,
+        body TEXT NOT NULL CHECK (json_valid(body)),
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE shared_model_locks (
+        consumer TEXT NOT NULL,
+        capability TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        PRIMARY KEY (consumer, capability)
+      );
+      CREATE TABLE shared_model_tasks (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        body TEXT NOT NULL CHECK (json_valid(body)),
+        created_at TEXT NOT NULL,
+        UNIQUE (project_id, idempotency_key)
+      );
+    `);
+  },
+};
+
 const SUPER_AGENT_SOURCE_MIGRATION: SchemaMigration = {
   generation: 132,
   module: 'super-agent',
@@ -3243,4 +3273,5 @@ export const BOT_HARNESS_SCHEMA_PLAN = defineSchemaPlan([
   CHANNEL_CHANGE_LOG_MIGRATION,
   SUPER_AGENT_RUN_MIGRATION,
   SUPER_AGENT_SOURCE_MIGRATION,
+  SHARED_MODEL_MIGRATION,
 ]);

@@ -68,8 +68,8 @@ function input(
     orders: [ORDER],
     now: FIXED_NOW().toISOString(),
     scopeKey: orchestratorToolScope('', env.grants.list(patch.botSlug ?? 'ada')),
-    approvalToken: patch.approvalToken,
-    approvalCallId: patch.approvalCallId,
+    ...(patch.approvalToken === undefined ? {} : { approvalToken: patch.approvalToken }),
+    ...(patch.approvalCallId === undefined ? {} : { approvalCallId: patch.approvalCallId }),
     toolInput: patch.toolInput ?? toolInput,
   };
 }
