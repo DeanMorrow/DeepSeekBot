@@ -6,7 +6,7 @@ API易按协议使用不同基址，不能收成一个全局 `/v1`：
 
 - `openai-chat` 只用于 `chat`，基址 `https://api.apiyi.com/v1`，路径 `/chat/completions`。
 - `openai-images` 只用于 `image`，同一 OpenAI 基址，路径 `/images/generations`。结果没有视频任务号。
-- `anthropic-messages` 只用于 `chat`，基址 `https://api.apiyi.com`，路径 `/v1/messages`。再加上 `/v1` 会被拒绝。
+- `anthropic-messages` 只用于 `chat`。基址 `https://api.apiyi.com`，实际请求是 `POST /v1/messages`，头是 `x-api-key` 和 `anthropic-version: 2023-06-01`，正文是 `model`、`max_tokens`、`messages`。不走 `/chat/completions`，也不加 `Authorization: Bearer`。
 - `openai-videos` 只用于 `video`，OpenAI 基址，`POST /videos` 与 `GET /videos/{id}`。
 - `apiyi-seedance` 只用于 `video`，基址 `https://api.apiyi.com`，`POST` 与 `GET /seedance/api/v3/contents/generations/tasks`。成功状态是 `succeeded`。公开文档没有取消端点，本地取消不发 DELETE。
 
@@ -16,4 +16,8 @@ API易按协议使用不同基址，不能收成一个全局 `/v1`：
 
 手选锁优先。没有锁时，Auto 只在同一能力下恰好一个已配置实例、且该实例恰好一个型号时成功。多个供应商或多个型号返回 `auto-ambiguous`。没有密钥返回 `credential-missing`。聊天不能提交图像或视频，概念图不能提交聊天。
 
-密钥只进 `SecretStore`。实例和任务的公开对象不含密钥。视频提交若没有解析出任务号，状态是 `submit-unknown`，同一项目和幂等键不会再次创建。取消只改本地状态，`remoteCancel` 为 `unverified`，不表示供应商退款或不会重复计费。
+`createMemorySecretStore` 只是测试用的内存实现。生产环境的 DSH 凭证服务没有接到这条路由。`createModelCatalog` 也没有调用它。`chat` 和 `concept-art` 只是参数和锁，不是已接上的聊天界面或概念图插件。
+
+密钥只进 `SecretStore`。图像成功时取出 `b64_json`，或把 `url` 标成 `untrusted-url`。不把整段 JSON 标成 `image/png`，也不去请求那个 URL。视频成功时只记录 `content.video_url` 为不受信 URL，不标成 `video/mp4`。没有可取字段时是 `raw-provider-response`，错误是 `empty-artifact`。
+
+视频提交若没有任务号，状态是 `submit-unknown`，同一项目和幂等键不会再次创建。`cancel` 只把 `localStop` 设为真，并保留 `remoteTaskId`。之后 `resume` 仍查询该任务号，并写下 `providerStatus`。`remoteCancel` 为 `unverified`。这不是退款，也不表示远端已停止。

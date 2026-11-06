@@ -72,6 +72,15 @@ interface StoredInstance extends InstanceSpec {
   createdAt: string;
 }
 
+export interface StoredArtifact {
+  kind: 'text' | 'base64' | 'untrusted-url' | 'raw-provider-response';
+  /** Present only for text or base64. Base64 is not labeled as png or mp4. */
+  value?: string;
+  /** Provider URL copied as text. It is not fetched and is not a trusted artifact. */
+  url?: string;
+  body?: string;
+}
+
 interface StoredTask {
   id: string;
   projectId: string;
@@ -81,8 +90,11 @@ interface StoredTask {
   protocol: ModelProtocol;
   model: string;
   remoteTaskId: string | null;
-  status: 'submit-unknown' | 'running' | 'completed' | 'failed' | 'cancelled';
-  artifact: { mediaType: string; body: string } | null;
+  status: 'submit-unknown' | 'running' | 'completed' | 'failed';
+  /** Local stop only. The provider may still be running and billing. */
+  localStop: boolean;
+  providerStatus: string | null;
+  artifact: StoredArtifact | null;
   error: string | null;
   remoteCancel: 'unverified';
 }
@@ -238,6 +250,15 @@ export function createSharedModelRoute(
     return { instance: only.instance, model: only.instance.models[0]! };
   };
 
+  const requestHeaders = (protocol: ModelProtocol, key: string): Record<string, string> =>
+    protocol === 'anthropic-messages'
+      ? {
+          'content-type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+        }
+      : { authorization: `Bearer ${key}`, 'content-type': 'application/json' };
+
   const authorizedFetch = async (
     instance: StoredInstance,
     path: string,
@@ -251,10 +272,7 @@ export function createSharedModelRoute(
     try {
       response = await fetchImpl(`${instance.baseUrl}${path}`, {
         method: init.method,
-        headers: {
-          authorization: `Bearer ${key}`,
-          'content-type': 'application/json',
-        },
+        headers: requestHeaders(instance.protocol, key),
         ...(init.body === undefined ? {} : { body: init.body }),
       });
     } catch {
@@ -266,6 +284,58 @@ export function createSharedModelRoute(
     } catch {
       return { status: response.status, json: undefined, text };
     }
+  };
+
+  const textField = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() !== '' ? value : undefined;
+
+  const interpret = (protocol: ModelProtocol, json: unknown, raw: string): StoredArtifact => {
+    if (typeof json !== 'object' || json === null) {
+      return { kind: 'raw-provider-response', body: raw };
+    }
+    const record = json as Record<string, unknown>;
+    if (protocol === 'openai-images') {
+      const data = Array.isArray(record.data) ? record.data[0] : undefined;
+      const item =
+        typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
+      const encoded = textField(item.b64_json);
+      if (encoded !== undefined) return { kind: 'base64', value: encoded };
+      const url = textField(item.url);
+      if (url !== undefined) return { kind: 'untrusted-url', url };
+      return { kind: 'raw-provider-response', body: raw };
+    }
+    if (protocol === 'apiyi-seedance' || protocol === 'openai-videos') {
+      const content =
+        typeof record.content === 'object' && record.content !== null
+          ? (record.content as Record<string, unknown>)
+          : {};
+      const url = textField(content.video_url) ?? textField(record.video_url);
+      if (url !== undefined) return { kind: 'untrusted-url', url };
+      return { kind: 'raw-provider-response', body: raw };
+    }
+    if (protocol === 'anthropic-messages') {
+      const blocks = Array.isArray(record.content) ? record.content : [];
+      const text = blocks
+        .map((block) =>
+          typeof block === 'object' &&
+          block !== null &&
+          (block as { type?: unknown }).type === 'text'
+            ? textField((block as { text?: unknown }).text)
+            : undefined,
+        )
+        .filter((item): item is string => item !== undefined)
+        .join('');
+      if (text !== '') return { kind: 'text', value: text };
+      return { kind: 'raw-provider-response', body: raw };
+    }
+    const choice = Array.isArray(record.choices) ? record.choices[0] : undefined;
+    const message =
+      typeof choice === 'object' && choice !== null
+        ? (choice as { message?: { content?: unknown } }).message
+        : undefined;
+    const content = textField(message?.content);
+    if (content !== undefined) return { kind: 'text', value: content };
+    return { kind: 'raw-provider-response', body: raw };
   };
 
   const saveTask = (task: StoredTask): void => {
@@ -377,6 +447,8 @@ export function createSharedModelRoute(
         model,
         remoteTaskId: null,
         status: 'submit-unknown',
+        localStop: false,
+        providerStatus: null,
         artifact: null,
         error: null,
         remoteCancel: 'unverified',
@@ -412,9 +484,15 @@ export function createSharedModelRoute(
         saveTask(task);
         return task;
       }
-      const path = capability === 'chat' ? '/chat/completions' : '/images/generations';
-      const body =
-        capability === 'chat'
+      const anthropic = instance.protocol === 'anthropic-messages';
+      const path = anthropic
+        ? '/v1/messages'
+        : capability === 'chat'
+          ? '/chat/completions'
+          : '/images/generations';
+      const body = anthropic
+        ? { model, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }
+        : capability === 'chat'
           ? { model, messages: [{ role: 'user', content: prompt }] }
           : { model, prompt };
       const response = await authorizedFetch(instance, path, {
@@ -428,11 +506,15 @@ export function createSharedModelRoute(
         saveTask(task);
         return task;
       }
-      task.status = 'completed';
-      task.artifact = {
-        mediaType: capability === 'chat' ? 'application/json' : 'image/png',
-        body: response.text,
-      };
+      const artifact = interpret(instance.protocol, response.json, response.text);
+      if (artifact.kind === 'raw-provider-response') {
+        task.status = 'failed';
+        task.error = 'empty-artifact';
+        task.artifact = artifact;
+      } else {
+        task.status = 'completed';
+        task.artifact = artifact;
+      }
       saveTask(task);
       return task;
     },
@@ -440,10 +522,7 @@ export function createSharedModelRoute(
       const task = readTask(projectId, idempotencyKey);
       if (task === undefined)
         throw new SharedRouteError('wrong-project', 'No task belongs to this project.');
-      if (task.status === 'submit-unknown' || task.remoteTaskId === null) return task;
-      if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
-        return task;
-      }
+      if (task.remoteTaskId === null) return task;
       const instance = readInstance(task.providerId);
       if (instance === undefined)
         throw new SharedRouteError('unconfigured', 'The provider is gone.');
@@ -456,11 +535,14 @@ export function createSharedModelRoute(
         typeof response.json === 'object' && response.json !== null
           ? (response.json as { status?: unknown }).status
           : undefined;
+      if (typeof status === 'string') task.providerStatus = status;
       const succeeded =
         task.protocol === 'apiyi-seedance' ? status === 'succeeded' : status === 'completed';
       if (succeeded) {
-        task.status = 'completed';
-        task.artifact = { mediaType: 'video/mp4', body: response.text };
+        const artifact = interpret(task.protocol, response.json, response.text);
+        task.artifact = artifact;
+        task.status = artifact.kind === 'raw-provider-response' ? 'failed' : 'completed';
+        if (task.status === 'failed') task.error = 'empty-artifact';
       } else if (status === 'failed' || status === 'expired') {
         task.status = 'failed';
         task.error = 'provider-failed';
@@ -472,7 +554,7 @@ export function createSharedModelRoute(
       const task = readTask(projectId, idempotencyKey);
       if (task === undefined)
         throw new SharedRouteError('wrong-project', 'No task belongs to this project.');
-      if (task.status === 'running' || task.status === 'submit-unknown') task.status = 'cancelled';
+      task.localStop = true;
       saveTask(task);
       return task;
     },

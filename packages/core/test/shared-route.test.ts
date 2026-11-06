@@ -39,7 +39,9 @@ describe('shared model route', () => {
     const harness = open(async (url, init) => {
       seen.push(`${init?.method} ${String(url)}`);
       expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${SECRET}`);
-      return new Response(JSON.stringify({ id: 'chat-1', choices: [] }), { status: 200 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'hello back' } }] }), {
+        status: 200,
+      });
     });
     await harness.route.saveInstance(
       {
@@ -81,13 +83,18 @@ describe('shared model route', () => {
     expect(listed).not.toContain(SECRET);
     expect(listed).not.toContain('sk-kimi');
     const sent = await harness.route.submit('chat', 'chat', 'project-a', 'once', 'hello');
-    expect(sent.status).toBe('completed');
+    expect(sent).toMatchObject({
+      status: 'completed',
+      artifact: { kind: 'text', value: 'hello back' },
+    });
     expect(seen).toEqual([`POST ${APIYI}/chat/completions`]);
     expect(JSON.stringify(sent)).not.toContain(SECRET);
   });
 
   it('shares one saved instance between chat and concept art without aliasing image to chat', async () => {
-    const harness = open(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    const harness = open(
+      async () => new Response(JSON.stringify({ data: [{ b64_json: 'QUJD' }] }), { status: 200 }),
+    );
     await harness.route.saveInstance(
       {
         id: 'apiyi-image',
@@ -147,7 +154,9 @@ describe('shared model route', () => {
       protocol: 'openai-images',
       remoteTaskId: null,
       status: 'completed',
+      artifact: { kind: 'base64', value: 'QUJD' },
     });
+    expect(JSON.stringify(image)).not.toContain('image/png');
     await expect(
       harness.route.submit('chat', 'image', 'project-a', 'img-2', 'a lighthouse'),
     ).rejects.toMatchObject({
@@ -200,13 +209,15 @@ describe('shared model route', () => {
     expect(first.remoteTaskId).toBeNull();
     expect(second.id).toBe(first.id);
     expect(calls).toBe(1);
-    expect(harness.route.cancel('project-a', 'clip-1').status).toBe('cancelled');
+    expect(harness.route.cancel('project-a', 'clip-1')).toMatchObject({
+      localStop: true,
+      status: 'submit-unknown',
+      remoteTaskId: null,
+    });
     expect(calls).toBe(1);
     await expect(harness.route.resume('project-b', 'clip-1')).rejects.toMatchObject({
       reason: 'wrong-project',
     });
-    const cancelled = harness.route.cancel('project-a', 'clip-1');
-    expect(cancelled).toMatchObject({ status: 'cancelled', remoteCancel: 'unverified' });
   });
 
   it('resumes a known video task id and keeps a failed terminal state', async () => {
@@ -246,13 +257,110 @@ describe('shared model route', () => {
     expect(seen[1]).toBe(
       'GET https://api.apiyi.com/seedance/api/v3/contents/generations/tasks/remote-9',
     );
-    harness.route.cancel('project-a', 'clip-2');
+    const stopped = harness.route.cancel('project-a', 'clip-2');
+    expect(stopped).toMatchObject({
+      localStop: true,
+      remoteTaskId: 'remote-9',
+      remoteCancel: 'unverified',
+    });
     const again = await harness.route.resume('project-a', 'clip-2');
-    expect(again.status).toBe('failed');
+    expect(again).toMatchObject({
+      status: 'failed',
+      localStop: true,
+      remoteTaskId: 'remote-9',
+      providerStatus: 'failed',
+    });
     expect(seen).toEqual([
       'POST https://api.apiyi.com/seedance/api/v3/contents/generations/tasks',
       'GET https://api.apiyi.com/seedance/api/v3/contents/generations/tasks/remote-9',
+      'GET https://api.apiyi.com/seedance/api/v3/contents/generations/tasks/remote-9',
     ]);
+    expect(JSON.stringify(again)).not.toContain('video/mp4');
     expect(JSON.stringify(again)).not.toContain(SECRET);
+  });
+
+  it('sends Anthropic messages on the root host and records image products without pretending they are files', async () => {
+    const calls: Array<{ url: string; headers: Headers; body: unknown }> = [];
+    let imageMode: 'base64' | 'url' | 'empty' = 'url';
+    const harness = open(async (url, init) => {
+      calls.push({
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)),
+      });
+      if (String(url).endsWith('/v1/messages')) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: 'native reply' }] }), {
+          status: 200,
+        });
+      }
+      if (imageMode === 'empty') return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      if (imageMode === 'url') {
+        return new Response(
+          JSON.stringify({ data: [{ url: 'https://untrusted.example/image' }] }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ data: [{ b64_json: 'QUJD' }] }), { status: 200 });
+    });
+    await harness.route.saveInstance(
+      {
+        id: 'apiyi-claude',
+        gateway: 'apiyi',
+        vendor: 'anthropic',
+        capability: 'chat',
+        protocol: 'anthropic-messages',
+        baseUrl: 'https://api.apiyi.com',
+        models: ['claude-sonnet-4-6'],
+        credentialRef: 'apiyi-account',
+      },
+      SECRET,
+    );
+    harness.route.lock('chat', 'chat', 'apiyi-claude', 'claude-sonnet-4-6');
+    const reply = await harness.route.submit('chat', 'chat', 'project-a', 'claude-1', 'hello');
+    expect(calls[0]?.url).toBe('https://api.apiyi.com/v1/messages');
+    expect(calls[0]?.headers.get('x-api-key')).toBe(SECRET);
+    expect(calls[0]?.headers.get('anthropic-version')).toBe('2023-06-01');
+    expect(calls[0]?.headers.get('authorization')).toBeNull();
+    expect(calls[0]?.body).toEqual({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    expect(reply.artifact).toEqual({ kind: 'text', value: 'native reply' });
+    await harness.route.saveInstance({
+      id: 'apiyi-image',
+      gateway: 'apiyi',
+      vendor: 'openai',
+      capability: 'image',
+      protocol: 'openai-images',
+      baseUrl: APIYI,
+      models: ['fixture-image-model'],
+      credentialRef: 'apiyi-account',
+    });
+    harness.route.lock('concept-art', 'image', 'apiyi-image', 'fixture-image-model');
+    const linked = await harness.route.submit(
+      'concept-art',
+      'image',
+      'project-a',
+      'img-url',
+      'prompt',
+    );
+    expect(linked.artifact).toEqual({
+      kind: 'untrusted-url',
+      url: 'https://untrusted.example/image',
+    });
+    expect(calls.filter((call) => call.url === 'https://untrusted.example/image')).toHaveLength(0);
+    imageMode = 'empty';
+    const empty = await harness.route.submit(
+      'concept-art',
+      'image',
+      'project-a',
+      'img-empty',
+      'prompt',
+    );
+    expect(empty).toMatchObject({ status: 'failed', error: 'empty-artifact' });
+    await expect(harness.route.resume('project-b', 'img-url')).rejects.toMatchObject({
+      reason: 'wrong-project',
+    });
   });
 });
