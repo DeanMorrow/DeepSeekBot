@@ -1,7 +1,13 @@
 import { createHash } from 'node:crypto';
 
 import type { OperationalDatabaseModulePort } from '../database/owner.js';
-import { inspectImage, ImageFormatError, type ImageMime } from '../media/image-format.js';
+import {
+  inspectImage,
+  ImageFormatError,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_PIXELS,
+  type ImageMime,
+} from '../media/image-format.js';
 import type { SessionOwnership } from '../sessions/ownership.js';
 import type { StoredArtifact } from './shared-route.js';
 
@@ -19,6 +25,8 @@ export interface ConceptArtRequest {
     state: 'none' | 'selected' | 'disabled';
     styleRef?: string | null;
     version?: string | null;
+    def?: string | null;
+    def_fixture?: string | null;
   };
   style_history_audit_only?: readonly { styleRef?: string; def?: string }[];
   references?: readonly { id: string; status: string }[];
@@ -34,8 +42,8 @@ export interface ConceptArtVerdict {
   status: 'ALLOWED' | 'BLOCKED' | 'INTEGRATION_BLOCKED' | 'NEEDS_CLARIFICATION';
   reasons: string[];
   submitCalls: number;
-  /** The consumer does not extract or optimize style. */
-  optimization: 'not-performed';
+  /** raw-preserved: the submitted prompt keeps the user's raw text and the selected style def. */
+  optimization: 'raw-preserved';
   projectId?: string;
   idempotencyKey?: string;
   prompt?: string;
@@ -103,7 +111,7 @@ export function transparencyMaterial(raw: string): 'conflict' | 'separate' | 'un
 function canonicalFingerprint(request: ConceptArtRequest): string {
   const snapshot = {
     raw_requirement: request.raw_requirement,
-    submit_prompt: request.submit_prompt ?? '',
+    submit_prompt: composeConceptPrompt(request),
     style: {
       state: request.style.state,
       styleRef: request.style.styleRef ?? null,
@@ -127,9 +135,35 @@ function pngPixelCount(prefix: Buffer): number | undefined {
 }
 
 function forbiddenLibraryText(request: ConceptArtRequest): string[] {
+  const raw = request.raw_requirement;
   return (request.style_history_audit_only ?? [])
     .map((item) => item.def?.trim() ?? '')
-    .filter((def) => def !== '');
+    .filter((def) => def !== '' && !raw.includes(def));
+}
+
+/** Keep the user's raw words. Add only the selected style def. Drop a caller prompt that reintroduces a cleared library def. */
+export function composeConceptPrompt(request: ConceptArtRequest): string {
+  const raw = request.raw_requirement.trim();
+  const selected =
+    request.style.state === 'selected'
+      ? (request.style.def ?? request.style.def_fixture ?? '').trim()
+      : '';
+  const parts = [raw];
+  if (selected !== '' && !raw.includes(selected)) parts.push(selected);
+  const extra = (request.submit_prompt ?? '').trim();
+  const cleared = forbiddenLibraryText(request);
+  if (extra !== '' && extra !== raw && !cleared.some((def) => extra.includes(def)))
+    parts.push(extra);
+  return parts.join('\n');
+}
+
+export function conceptArtMediaLimits(): ConceptArtLimits {
+  return {
+    maxEncodedBytes: MAX_IMAGE_BYTES,
+    maxDecodedBytes: MAX_IMAGE_BYTES,
+    maxPixels: MAX_IMAGE_PIXELS,
+    allowlist: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+  };
 }
 
 export function createConceptArtConsumer(input: {
@@ -164,7 +198,7 @@ export function createConceptArtConsumer(input: {
     status: ConceptArtVerdict['status'],
     reasons: string[],
     submitCalls: number,
-  ): ConceptArtVerdict => ({ status, reasons, submitCalls, optimization: 'not-performed' });
+  ): ConceptArtVerdict => ({ status, reasons, submitCalls, optimization: 'raw-preserved' });
 
   return {
     submitCount: () => submitCalls,
@@ -183,10 +217,7 @@ export function createConceptArtConsumer(input: {
           reasons.push('REFERENCE_REQUIRED_BUT_ROUTE_PROMPT_ONLY');
         else reasons.push(`REFERENCE_STATUS_UNKNOWN_${reference.status}`);
       }
-      const prompt = request.submit_prompt ?? '';
-      for (const def of forbiddenLibraryText(request)) {
-        if (prompt.includes(def)) reasons.push('CLEARED_STYLE_IN_PROMPT');
-      }
+      const prompt = composeConceptPrompt(request);
       if (
         request.submit_allowed &&
         reasons.length === 1 &&
@@ -198,7 +229,7 @@ export function createConceptArtConsumer(input: {
         return refused('BLOCKED', reasons, submitCalls - before);
       }
       const bound = sessionProjectId(input.ownership, request.sessionId);
-      if ('status' in bound) return { ...bound, submitCalls: 0, optimization: 'not-performed' };
+      if ('status' in bound) return { ...bound, submitCalls: 0, optimization: 'raw-preserved' };
       const fingerprint = canonicalFingerprint(request);
       const existing = readOp(bound.projectId, request.route_idempotency_key);
       if (existing !== undefined && existing.context_version !== String(request.context_version)) {
@@ -243,7 +274,7 @@ export function createConceptArtConsumer(input: {
         status: 'ALLOWED',
         reasons: [],
         submitCalls: submitCalls - before,
-        optimization: 'not-performed',
+        optimization: 'raw-preserved',
         projectId: bound.projectId,
         idempotencyKey: request.route_idempotency_key,
         prompt: existing?.prompt ?? prompt,
@@ -263,7 +294,7 @@ export function createConceptArtConsumer(input: {
     accept(task: RouteTask, contextVersion: string | number) {
       const limits = input.limits;
       const verdict = {
-        accept: false as const,
+        accept: false,
         deliverable: false as const,
         parsed: false,
         staleProviderError: task.error,
@@ -321,6 +352,8 @@ export function createConceptArtConsumer(input: {
       }
       return {
         ...verdict,
+        accept: true,
+        deliverable: false,
         parsed: true,
         reason: 'BYTES_PARSED_NOT_A_RENDER',
       };

@@ -97,12 +97,14 @@ describe('concept art consumer', () => {
       submit_allowed: true,
     } as never);
     expect(opened.status).toBe('ALLOWED');
-    expect(opened.prompt).toBe(none.expected.submit_prompt);
+    expect(opened.prompt).toContain(String(none.input.raw_requirement));
+    expect(opened.prompt).toContain(String(none.expected.submit_prompt));
+    expect(opened.optimization).toBe('raw-preserved');
     expect(opened.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.idempotencyKey).toBe(none.input.route_idempotency_key);
     expect(consumer.accept(opened.task!, 1)).toMatchObject({
-      accept: false,
+      accept: true,
       deliverable: false,
       parsed: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
@@ -141,8 +143,14 @@ describe('concept art consumer', () => {
       sessionId: 'fixture-ctx-1',
       submit_prompt: '平涂、粗轮廓、暖灰橙',
       submit_allowed: true,
+      operation_id: 'op-t3-poison',
+      route_idempotency_key: 'op-t3-poison',
+      input_fingerprint: 'fp-t3-poison',
     } as never);
-    expect(poisoned).toMatchObject({ status: 'BLOCKED', submitCalls: 0 });
+    expect(poisoned.status).toBe('ALLOWED');
+    expect(poisoned.prompt).toContain(String(switched.input.raw_requirement));
+    expect(poisoned.prompt).toContain('水彩、低饱和蓝绿');
+    expect(poisoned.prompt).not.toContain('平涂');
     expect(
       (
         await consumer.request({
@@ -166,6 +174,21 @@ describe('concept art consumer', () => {
         } as never)
       ).prompt,
     ).toContain('watercolor');
+    const kept = await consumer.request({
+      raw_requirement: '给我一张水彩码头',
+      submit_prompt: 'a pier with the medium words removed',
+      style: { state: 'disabled' },
+      style_history_audit_only: [{ styleRef: 'fixture-A', def: '平涂、粗轮廓、暖灰橙' }],
+      sessionId: 'fixture-ctx-1',
+      context_version: 1,
+      operation_id: 'op-keep-watercolor',
+      route_idempotency_key: 'op-keep-watercolor',
+      input_fingerprint: 'fp-keep-watercolor',
+      submit_allowed: true,
+    });
+    expect(kept.prompt).toContain('水彩');
+    expect(kept.prompt).not.toContain('平涂');
+    expect(kept.optimization).toBe('raw-preserved');
 
     const disabled = caseById('F_STYLE_DISABLED_SUCCESS');
     driven.add(disabled.id);
@@ -281,7 +304,7 @@ describe('concept art consumer', () => {
     expect(separatedTight).toMatchObject({
       status: 'ALLOWED',
       submitCalls: 1,
-      optimization: 'not-performed',
+      optimization: 'raw-preserved',
     });
     const unclear = await consumer.request({
       raw_requirement: '既要完全透明，也要不透光',
@@ -327,7 +350,7 @@ describe('concept art consumer', () => {
       submit_allowed: true,
     } as never);
     expect(again.idempotencyKey).toBe('op-t1-1');
-    expect(env.posts()).toBe(8);
+    expect(env.posts()).toBe(10);
 
     const fresh = caseById('F_EXPLICIT_NEW_GENERATION');
     driven.add(fresh.id);
@@ -340,7 +363,7 @@ describe('concept art consumer', () => {
         } as never)
       ).idempotencyKey,
     ).toBe('op-t1-2');
-    expect(env.posts()).toBe(9);
+    expect(env.posts()).toBe(11);
 
     const idem = caseById('F_IDEM_DIFF_PAYLOAD_REJECT');
     driven.add(idem.id);
@@ -397,7 +420,7 @@ describe('concept art consumer', () => {
       reason: 'LOCAL_STOP',
     });
     expect(cancelLate.expected.accept_as_image).toBe(false);
-    expect(env.posts()).toBe(9);
+    expect(env.posts()).toBe(11);
 
     const badB64 = caseById('F_BAD_BASE64');
     const jsonB64 = caseById('F_JSON_AS_B64');

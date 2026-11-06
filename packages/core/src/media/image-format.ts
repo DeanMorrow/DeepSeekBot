@@ -3,6 +3,9 @@ import { SaxesParser } from 'saxes';
 
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 export const MAX_SVG_BYTES = 1024 * 1024;
+/** Header edge and pixel caps already enforced by inspectImage. Concept art reuses these. */
+export const MAX_IMAGE_EDGE = 16384;
+export const MAX_IMAGE_PIXELS = 40_000_000;
 export type ImageMime = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/svg+xml';
 export interface ImageFormat {
   mime: ImageMime;
@@ -22,7 +25,8 @@ const size = (width: number, height: number) => {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) refuse();
   width = Math.ceil(width);
   height = Math.ceil(height);
-  if (width > 16384 || height > 16384 || width * height > 40_000_000) refuse('too-large');
+  if (width > MAX_IMAGE_EDGE || height > MAX_IMAGE_EDGE || width * height > MAX_IMAGE_PIXELS)
+    refuse('too-large');
   return { width: Math.ceil(width), height: Math.ceil(height) };
 };
 const ascii = (b: Uint8Array, at: number, n: number) =>
@@ -295,7 +299,7 @@ export function inspectImage(bytes: Uint8Array): ImageFormat {
         h = view.getUint16(at + 6, true);
       size(w, h);
       pixels += width * height;
-      if (++frames > 256 || pixels > 40_000_000) return refuse('too-large');
+      if (++frames > 256 || pixels > MAX_IMAGE_PIXELS) return refuse('too-large');
       if (view.getUint16(at, true) + w > width || view.getUint16(at + 2, true) + h > height)
         return refuse();
       const packed = b[at + 8]!;
@@ -351,7 +355,7 @@ export function inspectImage(bytes: Uint8Array): ImageFormat {
           h = u24(start + 9) + 1;
         size(w, h);
         pixels += result.width * result.height;
-        if (++frames > 256 || pixels > 40_000_000) return refuse('too-large');
+        if (++frames > 256 || pixels > MAX_IMAGE_PIXELS) return refuse('too-large');
         if (u24(start) * 2 + w > result.width || u24(start + 3) * 2 + h > result.height)
           return refuse();
         let encoded = false;

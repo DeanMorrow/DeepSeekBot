@@ -57,7 +57,7 @@ export function createConceptArtBridge(input: { conceptArt?: Consumer; sharedRou
             value: {
               ...route,
               limitsConfigured: input.conceptArt.limitsConfigured(),
-              mediaDelivery: 'closed',
+              mediaDelivery: input.conceptArt.limitsConfigured() ? 'parsed-not-verified' : 'closed',
               referenceImages: 'blocked-prompt-only',
             },
           };

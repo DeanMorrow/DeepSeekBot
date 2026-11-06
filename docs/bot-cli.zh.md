@@ -804,7 +804,7 @@ deepseekbot approval-reviewer-model-set bot
 
 ### 概念图
 
-`deepseekbot concept-art` 调用宿主 bridge 方法 `conceptArt`。这里不接收 API 密钥。`status` 报告手选的图像锁、该锁的凭证引用是否已配置，以及聊天模型目录不是这条图像路由。`request` 从标准输入读一个 JSON。`resume` 和 `cancel` 需要会话号和原来的操作键。`accept <session> <key> <context-version>` 读取已存任务，不把解析过的图像当成可交付成品：媒体限额未配置，`mediaVerified` 保持 false，`deliverable` 保持 false。路由带不了的参考图会被阻断。拒绝码包括 `usage` 和 `invalid-input`。
+`deepseekbot concept-art` 调用宿主 bridge 方法 `conceptArt`。这里不接收 API 密钥。`status` 报告手选的图像锁、该锁的凭证引用是否已配置，以及聊天模型目录不是这条图像路由。`request` 从标准输入读一个 JSON。`resume` 和 `cancel` 需要会话号和原来的操作键。`accept <session> <key> <context-version>` 读取已存任务。字节若能在宿主既有图像限额内解析（图像检查器的 `MAX_IMAGE_BYTES` 和 `MAX_IMAGE_PIXELS`），`accept` 为 true，原因是 `BYTES_PARSED_NOT_A_RENDER`。`mediaVerified` 和 `deliverable` 仍是 false：这不是已核验的成品图。提交的提示词保留用户原文和当前选中的风格定义；已停用的库风格定义不会附上，原文里的词也不会被删掉。路由带不了的参考图会被阻断。拒绝码包括 `usage` 和 `invalid-input`。
 
 ```bash
 deepseekbot concept-art status

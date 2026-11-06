@@ -168,9 +168,10 @@ describe('concept art host chain', () => {
     expect(JSON.stringify(opened)).not.toContain('sk-host-test');
     expect(opened.task?.artifact).toMatchObject({ kind: 'base64', mediaVerified: false });
     expect(core.conceptArt.accept(opened.task!, 1)).toMatchObject({
-      accept: false,
+      accept: true,
       deliverable: false,
-      reason: 'LIMITS_UNCONFIGURED',
+      parsed: true,
+      reason: 'BYTES_PARSED_NOT_A_RENDER',
       mediaVerified: false,
     });
     expect(posts).toBe(1);
@@ -181,9 +182,14 @@ describe('concept art host chain', () => {
       sessionId: 'fixture-ctx-1',
       submit_prompt: '平涂、粗轮廓、暖灰橙',
       submit_allowed: true,
+      operation_id: 'op-t3-poison',
+      route_idempotency_key: 'op-t3-poison',
+      input_fingerprint: 'fp-t3-poison',
     } as never);
-    expect(poisoned).toMatchObject({ status: 'BLOCKED', submitCalls: 0 });
-    expect(poisoned.reasons).toContain('CLEARED_STYLE_IN_PROMPT');
+    expect(poisoned.status).toBe('ALLOWED');
+    expect(poisoned.prompt).toContain(String(switched.input.raw_requirement));
+    expect(poisoned.prompt).not.toContain('平涂');
+    expect(posts).toBe(2);
     const clean = await core.conceptArt.request({
       ...(switched.input as object),
       sessionId: 'fixture-ctx-1',
@@ -192,7 +198,8 @@ describe('concept art host chain', () => {
     } as never);
     expect(clean).toMatchObject({ status: 'ALLOWED', submitCalls: 1 });
     expect(clean.prompt).not.toContain('平涂');
-    expect(posts).toBe(2);
+    expect(clean.prompt).toContain('水彩、低饱和蓝绿');
+    expect(posts).toBe(3);
 
     for (const id of ['F_BLOCK_CONFLICT', 'F_EMPTY_RAW', 'F_REF_LOCAL_BUT_ROUTE_PROMPT_ONLY']) {
       const item = caseById(id);
@@ -209,7 +216,7 @@ describe('concept art host chain', () => {
       expect(verdict).toMatchObject({ status: 'BLOCKED', submitCalls: 0 });
       expect(verdict.reasons).toEqual(item.expected.reasons);
     }
-    expect(posts).toBe(2);
+    expect(posts).toBe(3);
 
     const shield = await core.conceptArt.request({
       raw_requirement: '透明护罩加不透明底座，正面，不要多视图。',
@@ -224,7 +231,7 @@ describe('concept art host chain', () => {
     });
     expect(shield.reasons).not.toContain('CONFLICT_transparent_vs_opaque');
     expect(shield.status).toBe('ALLOWED');
-    expect(posts).toBe(3);
+    expect(posts).toBe(4);
 
     const mismatch = await core.conceptArt.request({
       ...(none.input as object),
@@ -238,7 +245,7 @@ describe('concept art host chain', () => {
       reasons: ['IDEMPOTENCY_KEY_PAYLOAD_MISMATCH'],
       submitCalls: 0,
     });
-    expect(posts).toBe(3);
+    expect(posts).toBe(4);
 
     const stopped = core.conceptArt.cancel(
       'fixture-ctx-1',
@@ -255,7 +262,7 @@ describe('concept art host chain', () => {
       reason: 'LOCAL_STOP',
       mediaVerified: false,
     });
-    expect(posts).toBe(3);
+    expect(posts).toBe(4);
 
     await core.runtime.close();
     core.externalMessaging.close();
@@ -274,7 +281,7 @@ describe('concept art host chain', () => {
       submit_allowed: true,
     } as never);
     expect(retry.idempotencyKey).toBe(none.input.route_idempotency_key);
-    expect(posts).toBe(3);
+    expect(posts).toBe(4);
     restarted.ownership.claim({
       sessionId: 'fixture-ctx-2',
       botSlug: 'ada',
@@ -358,8 +365,8 @@ describe('concept art host chain', () => {
       credentialConfigured: true,
       groupCoverage: 'unverified',
       catalog: 'not-the-image-route',
-      limitsConfigured: false,
-      mediaDelivery: 'closed',
+      limitsConfigured: true,
+      mediaDelivery: 'parsed-not-verified',
       referenceImages: 'blocked-prompt-only',
     });
     const cliStatus = await runConceptArtCommand(
@@ -372,7 +379,7 @@ describe('concept art host chain', () => {
       },
       async () => '',
     );
-    expect(cliStatus).toMatchObject({ limitsConfigured: false, catalog: 'not-the-image-route' });
+    expect(cliStatus).toMatchObject({ limitsConfigured: true, catalog: 'not-the-image-route' });
 
     const ask = async (itemId: string, extra: Record<string, unknown> = {}) => {
       const item = caseById(itemId);
@@ -404,7 +411,7 @@ describe('concept art host chain', () => {
       context_version: 2,
     });
     expect(version).toMatchObject({ status: 'BLOCKED', reasons: ['CONTEXT_VERSION_MISMATCH'] });
-    expect(opened).toMatchObject({ status: 'ALLOWED', optimization: 'not-performed' });
+    expect(opened).toMatchObject({ status: 'ALLOWED', optimization: 'raw-preserved' });
     const missing = (await callConceptArt(call, {
       action: 'request',
       request: {
@@ -432,9 +439,10 @@ describe('concept art host chain', () => {
         contextVersion: 1,
       }),
     ).toMatchObject({
-      accept: false,
+      accept: true,
       deliverable: false,
-      reason: 'LIMITS_UNCONFIGURED',
+      parsed: true,
+      reason: 'BYTES_PARSED_NOT_A_RENDER',
       mediaVerified: false,
     });
     const stopped = await callConceptArt(call, {

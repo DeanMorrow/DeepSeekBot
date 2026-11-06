@@ -202,7 +202,7 @@ import {
 } from './bots/bot-descriptor-sync.js';
 import { createModelPresetStore, type ModelPresetStore } from './models/presets.js';
 import { createModelCatalog } from './models/catalog.js';
-import { createConceptArtConsumer } from './models/concept-art-consumer.js';
+import { createConceptArtConsumer, conceptArtMediaLimits } from './models/concept-art-consumer.js';
 import { createCredentialSecretStore } from './models/credential-secret-store.js';
 import { createSharedModelRoute } from './models/shared-route.js';
 import { createCredentialReadiness } from './models/credential-readiness.js';
@@ -1119,7 +1119,7 @@ export function createCore(
     database: attachOperationalModule(operationalDatabase, 'concept-art'),
     ownership,
     route: sharedRoute,
-    limits: null,
+    limits: conceptArtMediaLimits(),
   });
   const voiceProviders = new VoiceProviders({
     database: attachOperationalModule(operationalDatabase, 'voice'),
