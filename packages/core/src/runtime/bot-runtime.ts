@@ -854,6 +854,7 @@ export interface BotRuntime {
   listAssignments(botSlug: string): AssignmentSummary[];
   latestAssignmentActivity?(): ReadonlyMap<string, number>;
   currentOrchestratorSessionId?(botSlug: string): string | undefined;
+  ensureOrchestratorSessionId?(botSlug: string): string | undefined;
   replaceOrchestrator?<T>(botSlug: string, body: () => T): Promise<OrchestratorReplacement<T>>;
   startFreshOrchestrator?(botSlug: string, assertCurrent?: () => void): Promise<'started' | 'busy'>;
   turnRunning?(botSlug: string): boolean;
@@ -4752,6 +4753,13 @@ class BotRuntimeImplementation implements BotRuntime {
           this.#ownership.contentAvailable(root.sessionId) &&
           this.#sessionArchived?.(root.sessionId) !== true,
       )?.sessionId;
+  }
+
+  /** Claim this Bot's orchestrator session the same way a normal turn does. */
+  ensureOrchestratorSessionId(botSlug: string): string | undefined {
+    const bot = this.#registry.get(botSlug);
+    if (bot === undefined || bot.paused === true) return undefined;
+    return this.#ensureOrchestrator(bot, this.#now().toISOString()).sessionId;
   }
 
   latestAssignmentActivity(): ReadonlyMap<string, number> {

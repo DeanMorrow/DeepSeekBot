@@ -2299,7 +2299,10 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
       return createConceptArtBridge({
         ...(deps.conceptArt === undefined ? {} : { conceptArt: deps.conceptArt }),
         ...(deps.sharedRoute === undefined ? {} : { sharedRoute: deps.sharedRoute }),
-        sessionForBot: (botSlug) => deps.runtime?.currentOrchestratorSessionId?.(botSlug) ?? null,
+        sessionForBot: (botSlug) =>
+          deps.runtime?.ensureOrchestratorSessionId?.(botSlug) ??
+          deps.runtime?.currentOrchestratorSessionId?.(botSlug) ??
+          null,
       }).conceptArt(payload) as Promise<BridgeResult<unknown>>;
     },
     channelBridges(payload) {

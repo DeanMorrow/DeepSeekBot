@@ -2943,20 +2943,84 @@ const CONCEPT_ART_STYLE_MIGRATION: SchemaMigration = {
 const CONCEPT_ART_STYLE_SCOPE_MIGRATION: SchemaMigration = {
   generation: 136,
   module: 'concept-art',
-  description: 'Scope concept-art styles to the owning Bot',
+  description: 'Mark concept-art style ownership without dropping saved definitions',
   migrate(database) {
+    const names = new Set(
+      (database.prepare('PRAGMA table_info(concept_art_styles)').all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+    if (names.has('ownership')) return;
+    const before = Number(
+      (database.prepare('SELECT COUNT(*) AS n FROM concept_art_styles').get() as { n: number }).n,
+    );
     database.exec(`
-      CREATE TABLE concept_art_styles_scoped (
-        bot_slug TEXT NOT NULL,
+      CREATE TABLE concept_art_styles_kept (
+        bot_slug TEXT,
         style_ref TEXT NOT NULL,
         version TEXT NOT NULL,
         def TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        PRIMARY KEY (bot_slug, style_ref, version)
+        ownership TEXT NOT NULL CHECK (ownership IN ('assigned', 'unassigned'))
       );
-      DROP TABLE concept_art_styles;
-      ALTER TABLE concept_art_styles_scoped RENAME TO concept_art_styles;
     `);
+    database
+      .prepare(
+        `INSERT INTO concept_art_styles_kept
+           (bot_slug, style_ref, version, def, created_at, ownership)
+         SELECT NULL, style_ref, version, def, created_at, 'unassigned'
+         FROM concept_art_styles`,
+      )
+      .run();
+    const copied = Number(
+      (database.prepare('SELECT COUNT(*) AS n FROM concept_art_styles_kept').get() as { n: number })
+        .n,
+    );
+    if (copied !== before) {
+      throw new Error(`concept_art_styles migration copied ${copied} of ${before} saved styles`);
+    }
+    database.exec(`
+      DROP TABLE concept_art_styles;
+      ALTER TABLE concept_art_styles_kept RENAME TO concept_art_styles;
+      CREATE UNIQUE INDEX concept_art_styles_assigned
+        ON concept_art_styles (bot_slug, style_ref, version)
+        WHERE ownership = 'assigned';
+      CREATE UNIQUE INDEX concept_art_styles_unassigned
+        ON concept_art_styles (style_ref, version)
+        WHERE ownership = 'unassigned';
+    `);
+  },
+};
+
+const CONCEPT_ART_STYLE_OWNERSHIP_MIGRATION: SchemaMigration = {
+  generation: 137,
+  module: 'concept-art',
+  description: 'Record style ownership on databases that already passed generation 136',
+  migrate(database) {
+    const names = new Set(
+      (database.prepare('PRAGMA table_info(concept_art_styles)').all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+    const before = Number(
+      (database.prepare('SELECT COUNT(*) AS n FROM concept_art_styles').get() as { n: number }).n,
+    );
+    if (!names.has('ownership')) {
+      database.exec(
+        "ALTER TABLE concept_art_styles ADD COLUMN ownership TEXT NOT NULL DEFAULT 'unassigned'",
+      );
+      database.exec(
+        `UPDATE concept_art_styles SET ownership = 'assigned' WHERE bot_slug IS NOT NULL`,
+      );
+    }
+    const after = Number(
+      (database.prepare('SELECT COUNT(*) AS n FROM concept_art_styles').get() as { n: number }).n,
+    );
+    if (after !== before) {
+      throw new Error(
+        `concept_art_styles ownership migration changed ${before} rows into ${after}`,
+      );
+    }
   },
 };
 
@@ -3333,4 +3397,5 @@ export const BOT_HARNESS_SCHEMA_PLAN = defineSchemaPlan([
   CONCEPT_ART_OPERATION_MIGRATION,
   CONCEPT_ART_STYLE_MIGRATION,
   CONCEPT_ART_STYLE_SCOPE_MIGRATION,
+  CONCEPT_ART_STYLE_OWNERSHIP_MIGRATION,
 ]);

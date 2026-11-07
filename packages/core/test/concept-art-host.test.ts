@@ -205,7 +205,7 @@ describe('concept art host chain', () => {
     expect(opened.task?.artifact).toMatchObject({ kind: 'base64', mediaVerified: false });
     expect(core.conceptArt.accept(opened.task!, 1)).toMatchObject({
       accept: true,
-      deliverable: true,
+      deliverable: false,
       parsed: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
       mediaVerified: false,
@@ -527,7 +527,7 @@ describe('concept art host chain', () => {
       }),
     ).toMatchObject({
       accept: true,
-      deliverable: true,
+      deliverable: false,
       parsed: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
       mediaVerified: false,

@@ -6,6 +6,8 @@ import type { BridgeActions } from './actions.js';
 import type { BridgeCall } from './bridge.js';
 import { callConceptArt } from './concept-art-bridge.js';
 import { SettingsRow, SettingsRows, SettingsSection } from './ds/settings-row.js';
+import { color, radius, size, space, text } from './ds/tokens.stylex.js';
+import * as stylex from '@stylexjs/stylex';
 
 type Props = PropsLocale<'botharness'> & InjectFace<{ call: BridgeCall }> & { botSlug?: string };
 
@@ -26,6 +28,7 @@ type Verdict = {
   mediaVerified?: boolean;
   artifact?: unknown;
   styles?: { styleRef: string; def: string }[];
+  unassigned?: { styleRef: string }[];
   rawRequirement?: string;
   modelPrompt?: string;
   def?: string;
@@ -56,6 +59,24 @@ export function conceptArtCall(conceptArt: BridgeActions['conceptArt']): BridgeC
   };
 }
 
+const panel = stylex.create({
+  root: {
+    backgroundColor: color.surface,
+    borderRadius: radius.lg,
+    padding: space.x4,
+  },
+  actions: { display: 'flex', flexWrap: 'wrap', gap: space.x3 },
+  button: {
+    minHeight: size.row,
+    paddingInline: space.x4,
+    borderWidth: 0,
+    borderRadius: radius.lg,
+    backgroundColor: color.fg,
+    color: color.base,
+    fontSize: text.bodySize,
+  },
+});
+
 function viewOf(value: unknown): Verdict & StatusView {
   return typeof value === 'object' && value !== null ? (value as Verdict & StatusView) : {};
 }
@@ -72,6 +93,7 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   const [picked, setPicked] = useState('');
   const [operationKey, setOperationKey] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [unassigned, setUnassigned] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -97,8 +119,9 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
         );
         const saved = await callConceptArt(call, { action: 'styles', botSlug });
         if (!live) return;
-        const list = viewOf(saved).styles;
-        if (Array.isArray(list)) setStyles(list);
+        const savedView = viewOf(saved);
+        if (Array.isArray(savedView.styles)) setStyles(savedView.styles);
+        setUnassigned(Array.isArray(savedView.unassigned) ? savedView.unassigned.length : 0);
       })
       .catch((error: unknown) => {
         if (!live) return;
@@ -196,72 +219,85 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
     });
   };
 
+  const styleValue = styleState === 'selected' ? picked : styleState;
   return (
-    <SettingsRows>
-      <SettingsSection>
-        <SettingsRow
-          title={t('conceptArt.style')}
-          description={`${note} ${flags} style:${styleState}`}
-        >
-          <button type="button" onClick={() => setStyleState('none')}>
-            {t('conceptArt.styleNone')}
-          </button>
-          <button type="button" onClick={() => setStyleState('disabled')}>
-            {t('conceptArt.styleOff')}
-          </button>
-          {styles.map((item) => (
-            <button
-              key={item.styleRef}
-              type="button"
-              onClick={() => {
-                setPicked(item.styleRef);
+    <div {...stylex.props(panel.root)}>
+      <SettingsRows>
+        <SettingsSection>
+          <SettingsRow
+            title={t('conceptArt.style')}
+            description={`${note}${unassigned > 0 ? ` ${t('conceptArt.unassigned')}` : ''} ${flags} style:${styleState}`}
+          >
+            <select
+              aria-label={t('conceptArt.style')}
+              value={styleValue}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (value === 'none' || value === 'disabled') {
+                  setStyleState(value);
+                  return;
+                }
+                setPicked(value);
                 setStyleState('selected');
               }}
             >
-              {item.styleRef}
+              <option value="none">{t('conceptArt.styleNone')}</option>
+              <option value="disabled">{t('conceptArt.styleOff')}</option>
+              {styles.map((item) => (
+                <option key={item.styleRef} value={item.styleRef}>
+                  {item.styleRef}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label={t('conceptArt.generate')}
+              value={styleNote}
+              onChange={(event) => setStyleNote(event.target.value)}
+            />
+            <button
+              type="button"
+              {...stylex.props(panel.button)}
+              disabled={
+                !ready || sessionId === null || (styleNote.trim() === '' && raw.trim() === '')
+              }
+              onClick={generate}
+            >
+              {t('conceptArt.generate')}
             </button>
-          ))}
-          <input
-            aria-label={t('conceptArt.generate')}
-            value={styleNote}
-            onChange={(event) => setStyleNote(event.target.value)}
-          />
-          <button
-            type="button"
-            disabled={
-              !ready || sessionId === null || (styleNote.trim() === '' && raw.trim() === '')
+          </SettingsRow>
+          <SettingsRow title={t('conceptArt.raw')} description={note}>
+            <textarea
+              aria-label={t('conceptArt.raw')}
+              value={raw}
+              onChange={(event) => setRaw(event.target.value)}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t('conceptArt.result')}
+            description={outcome || note}
+            control={
+              <>
+                <button
+                  type="button"
+                  {...stylex.props(panel.button)}
+                  disabled={!ready || sessionId === null || raw.trim() === ''}
+                  onClick={make}
+                >
+                  {t('conceptArt.make')}
+                </button>
+                <button
+                  type="button"
+                  {...stylex.props(panel.button)}
+                  disabled={operationKey === null}
+                  onClick={cancel}
+                >
+                  {t('conceptArt.cancel')}
+                </button>
+              </>
             }
-            onClick={generate}
-          >
-            {t('conceptArt.generate')}
-          </button>
-        </SettingsRow>
-        <SettingsRow title={t('conceptArt.raw')} description={note}>
-          <textarea
-            aria-label={t('conceptArt.raw')}
-            value={raw}
-            onChange={(event) => setRaw(event.target.value)}
           />
-        </SettingsRow>
-        <SettingsRow
-          title={t('conceptArt.result')}
-          description={outcome || note}
-          control={
-            <>
-              <button
-                type="button"
-                disabled={!ready || sessionId === null || raw.trim() === ''}
-                onClick={make}
-              >
-                {t('conceptArt.make')}
-              </button>
-              <button type="button" disabled={operationKey === null} onClick={cancel}>
-                {t('conceptArt.cancel')}
-              </button>
-            </>
-          }
-        />
-      </SettingsSection>
-    </SettingsRows>
+        </SettingsSection>
+      </SettingsRows>
+    </div>
   );
 }

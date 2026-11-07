@@ -120,7 +120,13 @@ export function createConceptArtBridge(input: {
               value: { status: 'BLOCKED', reasons: ['BOT_SESSION_MISMATCH'], botSlug },
             };
           }
-          return { ok: true, value: { styles: input.conceptArt.listStyles(botSlug) } };
+          return {
+            ok: true,
+            value: {
+              styles: input.conceptArt.listStyles(botSlug),
+              unassigned: input.conceptArt.listUnassigned(),
+            },
+          };
         }
         if (action === 'generateStyle') {
           const styleRef = body['styleRef'];

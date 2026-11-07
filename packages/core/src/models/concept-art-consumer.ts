@@ -264,19 +264,17 @@ export function createConceptArtConsumer(input: {
     return parts.join('\n');
   };
 
-  const modelTextFaithful = (request: ConceptArtRequest, text: string): boolean => {
+  const promptFromModel = (request: ConceptArtRequest, text: string): string | undefined => {
     const raw = request.raw_requirement.trim();
-    if (!text.includes(`RAW_START\n${raw}\nRAW_END`)) return false;
-    if (text.includes('CLARIFY_START')) return false;
+    if (!text.includes(`RAW_START\n${raw}\nRAW_END`)) return undefined;
+    if (text.includes('CLARIFY_START')) return undefined;
     const prompt = text.split('PROMPT_START\n')[1]?.split('\nPROMPT_END')[0]?.trim() ?? '';
-    if (prompt === '') return false;
-    const cleared = forbiddenLibraryText(request);
-    const kept = exciseLibrarySpans(prompt, cleared, raw);
-    const expected = composeConceptPrompt(request);
-    const addition = prompt.split(raw).join('');
-    if (/ignore previous|<\||\bsystem\s*:/iu.test(addition)) return false;
-    if (/换成|改成|改为|不要|别用|don't|do not use/iu.test(addition)) return false;
-    return kept === '' || kept === raw || kept === expected || expected.includes(kept);
+    if (!prompt.includes(raw)) return undefined;
+    const kept = exciseLibrarySpans(prompt, forbiddenLibraryText(request), raw);
+    if (!kept.includes(raw)) return undefined;
+    const userExtra = composeConceptPrompt(request).slice(raw.length).trim();
+    if (userExtra !== '' && !kept.includes(userExtra)) return `${kept}\n${userExtra}`;
+    return kept;
   };
 
   const optimizeWithChat = async (
@@ -292,9 +290,9 @@ export function createConceptArtConsumer(input: {
         : '';
     const cleared = forbiddenLibraryText(request);
     const instruction = [
-      'Check one concept-art requirement. Do not rewrite it.',
-      'The image prompt must stay the raw requirement, plus the selected style only.',
-      'If you are unsure or the requirement conflicts, ask instead of changing the subject.',
+      'Optimize one concept-art requirement.',
+      'Copy the raw requirement unchanged into the prompt, then add only detail that keeps it.',
+      'If you are unsure or would have to change the raw requirement, ask instead of sending a prompt.',
       selected === '' ? 'Do not add a library style.' : 'The selected style may be repeated.',
       'Do not use a cleared style definition.',
       'Reply using these markers exactly.',
@@ -321,13 +319,13 @@ export function createConceptArtConsumer(input: {
     try {
       const first = await read('optimize');
       if (first === undefined) return { status: 'BLOCKED', reasons: ['OPTIMIZE_FAILED'] };
-      if (!modelTextFaithful(request, first)) {
-        const second = await read('optimize-rework');
-        if (second === undefined || !modelTextFaithful(request, second)) {
-          return { status: 'NEEDS_CLARIFICATION', reasons: ['FIDELITY_CONTRADICTION'] };
-        }
+      const accepted =
+        promptFromModel(request, first) ??
+        promptFromModel(request, (await read('optimize-rework')) ?? '');
+      if (accepted === undefined) {
+        return { status: 'NEEDS_CLARIFICATION', reasons: ['FIDELITY_CONTRADICTION'] };
       }
-      return { status: 'ok', prompt: composeConceptPrompt(request) };
+      return { status: 'ok', prompt: accepted };
     } catch (error) {
       if (
         error instanceof SharedRouteError &&
@@ -446,10 +444,27 @@ export function createConceptArtConsumer(input: {
           .prepare(
             `SELECT style_ref AS styleRef, version, def
              FROM concept_art_styles
-             WHERE bot_slug = ?
+             WHERE bot_slug = ? AND ownership = 'assigned'
              ORDER BY created_at, style_ref`,
           )
           .all(botSlug) as { styleRef: string; version: string; def: string }[];
+      });
+    },
+    listUnassigned() {
+      return input.database.read((db) => {
+        return db
+          .prepare(
+            `SELECT style_ref AS styleRef, version, created_at AS createdAt, ownership
+             FROM concept_art_styles
+             WHERE ownership = 'unassigned' OR bot_slug IS NULL
+             ORDER BY created_at, style_ref`,
+          )
+          .all() as {
+          styleRef: string;
+          version: string;
+          createdAt: string;
+          ownership: 'unassigned';
+        }[];
       });
     },
     async generateStyle(inputStyle: { sessionId: string | null; styleRef: string; note: string }) {
@@ -489,14 +504,26 @@ export function createConceptArtConsumer(input: {
         if (def === '' || def === note)
           return refused('BLOCKED', ['STYLE_DEF_MISSING'], submitCalls - before);
         input.database.transaction(
-          (db) =>
-            db
+          (db) => {
+            const own = db
               .prepare(
-                `INSERT INTO concept_art_styles (bot_slug, style_ref, version, def, created_at)
-                 VALUES (?, ?, 'v1', ?, ?)
-                 ON CONFLICT(bot_slug, style_ref, version) DO UPDATE SET def = excluded.def`,
+                `SELECT def FROM concept_art_styles
+               WHERE bot_slug = ? AND style_ref = ? AND version = 'v1' AND ownership = 'assigned'`,
               )
-              .run(botSlug, styleRef, def, new Date().toISOString()),
+              .get(botSlug, styleRef) as { def: string } | undefined;
+            if (own !== undefined) {
+              db.prepare(
+                `UPDATE concept_art_styles SET def = ?
+               WHERE bot_slug = ? AND style_ref = ? AND version = 'v1' AND ownership = 'assigned'`,
+              ).run(def, botSlug, styleRef);
+              return;
+            }
+            db.prepare(
+              `INSERT INTO concept_art_styles
+               (bot_slug, style_ref, version, def, created_at, ownership)
+             VALUES (?, ?, 'v1', ?, ?, 'assigned')`,
+            ).run(botSlug, styleRef, def, new Date().toISOString());
+          },
           ['concept-art'],
         );
         return {
@@ -606,11 +633,11 @@ export function createConceptArtConsumer(input: {
       return {
         ...verdict,
         accept: true,
-        deliverable: true,
+        deliverable: false,
         parsed: true,
         mediaVerified: false,
         reason: 'BYTES_PARSED_NOT_A_RENDER',
-        mount: { kind: 'base64' as const, value: task.artifact.value },
+        delivery: 'not-mounted' as const,
       };
     },
   };

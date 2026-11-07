@@ -164,7 +164,7 @@ describe('concept art consumer', () => {
     expect(opened.task?.idempotencyKey).toBe(none.input.route_idempotency_key);
     expect(consumer.accept(opened.task!, 1)).toMatchObject({
       accept: true,
-      deliverable: true,
+      deliverable: false,
       parsed: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
       mediaVerified: false,
@@ -855,6 +855,27 @@ describe('concept art consumer', () => {
     expect(contradicted.status).toBe('NEEDS_CLARIFICATION');
     expect(contradicted.reasons).toContain('FIDELITY_CONTRADICTION');
     expect(env.posts()).toBe(beforeImages);
+    env.chatScripts.push({
+      choices: [
+        {
+          message: {
+            content: 'RAW_START\n水彩码头\nRAW_END\nPROMPT_START\n水彩码头\n雨丝更密\nPROMPT_END',
+          },
+        },
+      ],
+    });
+    const optimized = await consumer.request({
+      ...base,
+      raw_requirement: '水彩码头',
+      style: { state: 'none' },
+      operation_id: 'op-opt',
+      route_idempotency_key: 'op-opt',
+      input_fingerprint: 'fp-opt',
+    });
+    expect(optimized.status).toBe('ALLOWED');
+    expect(optimized.prompt).toContain('水彩码头');
+    expect(optimized.prompt).toContain('雨丝更密');
+    expect(env.posts()).toBe(beforeImages + 1);
     const spaced = await consumer.request({
       ...base,
       raw_requirement: '请保持全身可见',
