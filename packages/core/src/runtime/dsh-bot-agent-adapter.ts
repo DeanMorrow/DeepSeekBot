@@ -1,6 +1,9 @@
 import { createChannelActionTool } from './channel-action-tool.js';
 import { PRIVATE_INPUT_TOOLS } from '../credentials/tool-contract.js';
 import { createBotMessageTool } from './bot-message-tool.js';
+import { createPackTools } from '../memory/host-pack-tools.js';
+import { cancelSuperAgentRun, runSuperAgent, sealWorkOrders } from './super-agent-dispatch.js';
+import { orchestratorToolScope, sealToolInput } from './super-agent-authority.js';
 import { assertOrchestratorWorkingDirectory } from './orchestrator-working-directory.js';
 import { TOB_CLI_PROMPT } from '../tob/service.js';
 import { AssignmentInboxAcceptanceUncertainError } from './assignment-delivery.js';
@@ -71,6 +74,21 @@ export const TURN_ONLY_BOT_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 const CATALOG_RUN = { sessionId: '', bot: { slug: '' } } as unknown as OrchestratorAgentRun;
+
+function parseOrderIds(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some((item) => typeof item !== 'string' || item.trim() === '')
+    ) {
+      return [];
+    }
+    return parsed;
+  } catch {
+    return [];
+  }
+}
 
 function withContextMentionNames<
   T extends { text: string; mentions?: MessagingInboundEvent['mentions'] },
@@ -288,6 +306,11 @@ export interface DshBotAgentAdapterOptions {
   defaultAgentPreset?: string;
 
   orchestratorCwd?: (bot: PersonaBotRecord) => string | undefined;
+  catalogSourcePath?: () => string | undefined;
+  catalogSession?: () => { sessionOwnerId: string; ownedBotSlugs: readonly string[] };
+  workspaceGrants?: (
+    botSlug: string,
+  ) => readonly { id: string; workspacePath: string; revokedAt?: string }[];
   ensureWorkspace?: (path: string) => void;
   publishDraft?: (event: ChannelDraftEvent) => void;
 
@@ -484,6 +507,9 @@ class DshBotAgentAdapter implements BotAgentAdapter {
   readonly #promptText: (sessionId: string) => PromptText;
   readonly #hasSession: DshBotAgentAdapterOptions['hasSession'];
   readonly #orchestratorCwd: ((bot: PersonaBotRecord) => string | undefined) | undefined;
+  readonly #catalogSourcePath: (() => string | undefined) | undefined;
+  readonly #catalogSession: DshBotAgentAdapterOptions['catalogSession'];
+  readonly #workspaceGrants: DshBotAgentAdapterOptions['workspaceGrants'];
   readonly #defaultAgentPreset: string | undefined;
   readonly #authorizeBorrow:
     | ((agent: Agent, role: 'orchestrator' | 'assignment') => void)
@@ -529,6 +555,9 @@ class DshBotAgentAdapter implements BotAgentAdapter {
     this.#promptText = options.promptText ?? (() => DEFAULT_PROMPT_TEXT);
     this.#hasSession = options.hasSession;
     this.#orchestratorCwd = options.orchestratorCwd;
+    this.#catalogSourcePath = options.catalogSourcePath;
+    this.#catalogSession = options.catalogSession;
+    this.#workspaceGrants = options.workspaceGrants;
     this.#defaultAgentPreset = options.defaultAgentPreset;
     this.#authorizeBorrow = options.authorizeBorrow;
     this.#admitSession = options.admitSession;
@@ -1125,6 +1154,20 @@ class DshBotAgentAdapter implements BotAgentAdapter {
     registerTool: (tool: ToolDefinition) => unknown,
     registerBridgeTool: (tool: ToolDefinition) => unknown,
   ): void {
+    for (const tool of createPackTools(run.bot.slug, {
+      memoryDir: () => this.#orchestratorCwd?.(run.bot),
+      catalogSourcePath: () => this.#catalogSourcePath?.(),
+      catalogSession: () => this.#catalogSession?.() ?? { sessionOwnerId: '', ownedBotSlugs: [] },
+      grant: (id) => {
+        const found = this.#workspaceGrants?.(run.bot.slug)?.find(
+          (grant) => grant.id === id && grant.revokedAt === undefined,
+        );
+        return found === undefined
+          ? undefined
+          : { id: found.id, workspacePath: found.workspacePath };
+      },
+    }))
+      registerTool(tool);
     registerTool(
       createChannelActionTool(
         () => {
@@ -1382,6 +1425,165 @@ class DshBotAgentAdapter implements BotAgentAdapter {
             retryable: true,
             message: outcome.message,
           });
+        },
+      }),
+    );
+    registerTool(
+      defineTool({
+        name: 'super_agent_run',
+        description:
+          'Schedule sealed work orders on an active Workspace Grant. Order ids must already belong to this session, Bot and Grant. A host call can start model work and may cost. Depth 2, two running or queued at a time.',
+        parameters: {
+          order_ids: {
+            type: 'string',
+            required: true,
+            description: 'JSON array of order ids returned by super_agent_seal.',
+          },
+          grant_id: {
+            type: 'string',
+            description:
+              'Active Workspace Grant id. Omitted requests are refused and create nothing.',
+          },
+          depth: {
+            type: 'number',
+            description: 'Caller depth. 1 may dispatch. 2 or more is refused.',
+          },
+          run_id: {
+            type: 'string',
+            description:
+              'Server-issued run id for a retry of the same work orders. Omit to start a new run. A different session or a different payload is refused.',
+          },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        execute: async (args, context) => {
+          const active = this.#runs.get(run.sessionId);
+          if (active?.role !== 'orchestrator') {
+            throw new Error('super_agent_run: Orchestrator run is unavailable');
+          }
+          if (active.run.superAgent === undefined) {
+            throw new Error('super_agent_run: durable ledger is unavailable');
+          }
+          const orderIds = parseOrderIds(args.order_ids);
+          const value = await runSuperAgent(
+            {
+              orderIds,
+              grantId: args.grant_id,
+              depth: args.depth,
+              runId: args.run_id,
+              sessionId: run.sessionId,
+              botSlug: active.run.bot.slug,
+              now: new Date().toISOString(),
+            },
+            active.run.superAgent,
+            {
+              kind: 'host-assignment',
+              grants: () => active.run.assignments.grants(),
+              list: () => active.run.assignments.list(),
+              create: (request) => active.run.assignments.create(request),
+              stop: (sessionId) => active.run.assignments.stop(sessionId),
+            },
+            context.signal,
+          );
+          return JSON.stringify(value);
+        },
+      }),
+    );
+    registerTool(
+      defineTool({
+        name: 'super_agent_seal',
+        description:
+          'Store explicit work orders for this session, Bot and Grant after a Human approval of this exact call. A message that merely contains the words is not approval. Does not read private memory or schedule a model.',
+        parameters: {
+          grant_id: { type: 'string', required: true, description: 'Active Workspace Grant id.' },
+          work_orders: {
+            type: 'string',
+            required: true,
+            description:
+              'JSON array of {goal, steps, acceptance}. Model-written text needs a Human approval or an exact saved rule. Authorization flags are refused.',
+          },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        execute: async (args, context) => {
+          const active = this.#runs.get(run.sessionId);
+          if (
+            active?.role !== 'orchestrator' ||
+            active.run.superAgent === undefined ||
+            active.run.workOrderAuthority === undefined
+          ) {
+            throw new Error('super_agent_seal: durable ledger is unavailable');
+          }
+          const toolInput = sealToolInput(args);
+          const sealed = sealWorkOrders(
+            active.run.superAgent,
+            {
+              botSlug: active.run.bot.slug,
+              sessionId: run.sessionId,
+              grantId: args.grant_id,
+              orders: args.work_orders,
+              now: new Date().toISOString(),
+              scopeKey: orchestratorToolScope(
+                context.agent?.session.header.cwd ?? '',
+                active.run.assignments.grants(),
+              ),
+              approvalToken: String(context.token),
+              approvalCallId: String(context.callId),
+              toolInput,
+            },
+            active.run.workOrderAuthority,
+          );
+          return JSON.stringify(sealed);
+        },
+      }),
+    );
+    registerTool(
+      defineTool({
+        name: 'super_agent_cancel',
+        description:
+          'Stop the Assignment Sessions of one super_agent_run id owned by this Orchestrator Session. Does not stop other runs.',
+        parameters: {
+          run_id: {
+            type: 'string',
+            required: true,
+            description: 'runId returned by super_agent_run.',
+          },
+          grant_id: {
+            type: 'string',
+            required: true,
+            description: 'The same Workspace Grant id used to start the run.',
+          },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        execute: async (args) => {
+          const active = this.#runs.get(run.sessionId);
+          if (active?.role !== 'orchestrator' || active.run.superAgent === undefined) {
+            throw new Error('super_agent_cancel: durable ledger is unavailable');
+          }
+          const value = await cancelSuperAgentRun(
+            {
+              runId: args.run_id,
+              grantId: args.grant_id,
+              sessionId: run.sessionId,
+              botSlug: active.run.bot.slug,
+            },
+            active.run.superAgent,
+            {
+              kind: 'host-assignment',
+              grants: () => active.run.assignments.grants(),
+              list: () => active.run.assignments.list(),
+              create: (request) => active.run.assignments.create(request),
+              stop: (sessionId) => active.run.assignments.stop(sessionId),
+            },
+          );
+          return JSON.stringify(value);
         },
       }),
     );

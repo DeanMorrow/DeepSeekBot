@@ -57,6 +57,12 @@ async function invoke(argv: string[], url: string, stdin = '') {
 }
 
 describe('Harness Bot tool runner commands', () => {
+  it('asks the live Host for the owner catalog view', async () => {
+    const live = await host(() => ({ ok: true, value: { catalog: { status: 'unreachable' } } }));
+    const result = await invoke(['catalog'], live.url);
+    expect(result.code).toBe(0);
+    expect(live.calls).toEqual([{ method: 'catalogView', args: {} }]);
+  });
   it('passes explicit Source Event causation separately from Bot tool arguments', async () => {
     const live = await host(() => ({ ok: true, value: { result: 'accepted' } }));
     const result = await invoke(

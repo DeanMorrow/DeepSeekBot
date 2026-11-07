@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,10 @@ import { PRIVATE_INPUT_TOOLS } from '../src/credentials/tool-contract.js';
 import { TAKEOVER_TOOLS } from '../src/takeover/contracts.js';
 
 import { createChannelStore } from '../src/channels/store.js';
+import {
+  grantToolExecutionDenial,
+  requiresHumanToolApproval,
+} from '../src/workspaces/grant-execution.js';
 import { attachOperationalModule, mountOperationalDatabase } from '../src/database/owner.js';
 import { BOT_HARNESS_SCHEMA_PLAN } from '../src/database/schema-plan.js';
 import { directToolTrace } from '../src/bots/tool-trace.js';
@@ -30,6 +34,49 @@ function botToolNamesFrom(source: string): string[] {
   return block === null ? [] : [...block[1]!.matchAll(/'([a-z_]+)'/g)].map((name) => name[1]!);
 }
 
+function approvalProbe() {
+  const sessionId = 'botharness-assignment';
+  const grantId = 'grant-1';
+  const cwd = '/tmp/grant-workspace';
+  const core = {
+    ownership: {
+      resolve: (id: string) =>
+        id === sessionId
+          ? {
+              sessionId,
+              botSlug: 'ada',
+              rootRole: 'assignment' as const,
+              parentSessionId: undefined,
+            }
+          : undefined,
+    },
+    runtime: {
+      getAssignment: () => ({
+        permission: {
+          grantId,
+          workspaceId: 'workspace-1',
+          primaryCwd: cwd,
+          mode: 'workspace-write',
+          approval: 'ask',
+          presetRevision: 0,
+        },
+      }),
+    },
+    grants: {
+      requireActive: () => ({ id: grantId, workspaceId: 'workspace-1', workspacePath: cwd }),
+      list: () => [],
+    },
+    registry: { memoryDirFor: () => '/tmp/memory', get: () => ({ slug: 'ada' }), list: () => [] },
+    hostTools: new Set<string>(),
+  } as never;
+  return {
+    core,
+    policy: { resolve: () => ({ mode: 'workspace-write' }) } as never,
+    approval: { overrideOf: () => 'ask' } as never,
+    assignment: { id: sessionId, header: { cwd } } as never,
+  };
+}
+
 function setup() {
   const home = createTempRoot('botharness-direct-tools-');
   const registry = createTestRegistry({ rootDir: join(home, 'bots'), now: FIXED_NOW });
@@ -43,7 +90,16 @@ function setup() {
   const agents = createDshBotAgentAdapter({
     agents: host,
     defaultModel: { currentSelection: () => ({ provider: 'test', model: 'test' }) },
-    orchestratorCwd: () => join(home, 'memory'),
+    orchestratorCwd: () => {
+      const dir = join(home, 'memory');
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    },
+    workspaceGrants: () => {
+      const dir = join(home, 'project');
+      mkdirSync(dir, { recursive: true });
+      return [{ id: 'grant-1', workspacePath: dir }];
+    },
     ensureWorkspace: () => undefined,
     subagentTools: () => createBotSubagentModelTools({} as Context, () => undefined),
   });
@@ -61,6 +117,129 @@ function setup() {
 }
 
 describe('direct Bot tool runner', () => {
+  it('registers super_agent_run and refuses dispatch without a grant (test executor, not a model)', async () => {
+    const { runtime } = setup();
+    const signal = new AbortController().signal;
+    expect(runtime.directBotTools!().map((tool) => tool.name)).toContain('super_agent_run');
+    expect(TURN_ONLY_BOT_TOOLS.has('super_agent_run')).toBe(false);
+    const refused = await runtime.runDirectBotTool!(
+      'ada',
+      'super_agent_run',
+      { order_ids: '["not-a-sealed-order"]', grant_id: 'missing' },
+      signal,
+    );
+    expect(refused.result).toMatchObject({
+      ok: false,
+      reason: 'grant-unauthorized',
+      officialInstalled: false,
+      executor: 'host-assignment',
+      liveModelDispatch: false,
+      scheduled: false,
+      mayIncurModelCost: false,
+      dispatched: [],
+    });
+  });
+
+  it('runs pack memory on the Host Bot through the direct tool chain (test executor, not a model)', async () => {
+    const { runtime } = setup();
+    const signal = new AbortController().signal;
+    const added = await runtime.runDirectBotTool!(
+      'ada',
+      'pack_private_add',
+      { task: '打开错误页', lesson: '先看父级' },
+      signal,
+    );
+    expect(added.result).toMatchObject({ ok: true, ownerBotId: 'ada' });
+    const id = (added.result as { id: string }).id;
+    await expect(
+      runtime.runDirectBotTool!('ada', 'pack_private_read', { id, actor: 'bee' }, signal),
+    ).resolves.toMatchObject({ result: { ok: false, reason: 'actor-mismatch' } });
+    await expect(
+      runtime.runDirectBotTool!('ada', 'pack_private_read', { id }, signal),
+    ).resolves.toMatchObject({
+      result: { ok: true, record: { lesson: '先看父级', ownerBotId: 'ada' } },
+    });
+    const shared = await runtime.runDirectBotTool!(
+      'ada',
+      'pack_shared_publish',
+      {
+        grant_id: 'grant-1',
+        task: '打开错误页',
+        lesson: '先看父级容器',
+        approved: true,
+        desensitized: true,
+      },
+      signal,
+    );
+    expect(shared.result).toMatchObject({ ok: true });
+    const recalled = await runtime.runDirectBotTool!(
+      'ada',
+      'pack_recall',
+      { task: '打开错误页', grant_id: 'grant-1' },
+      signal,
+    );
+    expect(recalled.result).toMatchObject({
+      ok: true,
+      privateHits: [expect.objectContaining({ lesson: '先看父级' })],
+      sharedHits: [expect.objectContaining({ lesson: '先看父级容器' })],
+    });
+    const migrated = await runtime.runDirectBotTool!(
+      'ada',
+      'pack_migrate',
+      { seed_dir: join(repo, 'adapters/tobs-thinking/seed') },
+      signal,
+    );
+    expect(migrated.result).toMatchObject({
+      ok: true,
+      copied: expect.arrayContaining(['the-top-thinking']),
+    });
+    const catalog = await runtime.runDirectBotTool!('ada', 'pack_catalog', {}, signal);
+    const view = catalog.result as {
+      directOmissionMeansModelLoadFailed: boolean;
+      modelSkillCatalog: string;
+      inventories: Array<{ id: string; status: string; briefs?: unknown[]; entry?: string | null }>;
+    };
+    expect(view.directOmissionMeansModelLoadFailed).toBe(false);
+    expect(view.modelSkillCatalog).toBe('untested');
+    expect(view.inventories.map((item) => item.id)).toEqual(
+      expect.arrayContaining([
+        'skills',
+        'bots',
+        'plugin-tools',
+        'modules',
+        'templates',
+        'ops-asset-catalog',
+      ]),
+    );
+    expect(view.inventories.find((item) => item.id === 'skills')?.status).toBe('active');
+    expect(view.inventories.find((item) => item.id === 'ops-asset-catalog')).toMatchObject({
+      status: 'unreachable',
+      entry: null,
+    });
+    expect(JSON.stringify(view)).not.toContain('memory/private');
+    expect(
+      existsSync(join(repo, 'adapters/tobs-thinking/seed/.dsh/skills/the-top-thinking/SKILL.md')),
+    ).toBe(true);
+  });
+
+  it('keeps the native skill tool off the direct catalog', async () => {
+    const { runtime } = setup();
+    try {
+      const names = runtime.directBotTools!().map((tool) => tool.name);
+      expect(names).not.toContain('skill');
+      await expect(
+        runtime.runDirectBotTool!(
+          'ada',
+          'skill',
+          { name: 'the-top-thinking' },
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ code: 'tool-not-direct' });
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it('removes obsolete delivery tools from the catalog and refuses direct execution', async () => {
     const { runtime } = setup();
     try {
@@ -154,7 +333,48 @@ describe('direct Bot tool runner', () => {
         )
         .sort(),
     );
-    expect(listed.every((name) => botTools.includes(name))).toBe(true);
+    // BOT_TOOL_NAMES is the grant-execution exemption list, not the visible list.
+    // The retired check `listed.every(name => botTools.includes(name))` stays red in
+    // the 9d6 audit logs. It is not rewritten to false and seal is not added to the set.
+    const visibleNotExempt = listed.filter((name) => !botTools.includes(name)).sort();
+    expect(visibleNotExempt).toContain('super_agent_seal');
+    expect(botTools).not.toContain('super_agent_seal');
+    expect(listed).toEqual(expect.arrayContaining(['pack_catalog', 'pack_catalog_open']));
+    expect(botTools).toEqual(expect.arrayContaining(['pack_catalog', 'pack_catalog_open']));
+    const openTool = runtime.directBotTools!().find((tool) => tool.name === 'pack_catalog_open');
+    expect(openTool?.inputSchema).toMatchObject({
+      type: 'object',
+      properties: { entryRef: { type: 'string' } },
+      required: ['entryRef'],
+    });
+    const session = approvalProbe();
+    for (const name of visibleNotExempt) {
+      expect(requiresHumanToolApproval(name), name).toBe(true);
+      expect(
+        grantToolExecutionDenial(
+          session.core,
+          session.assignment,
+          session.policy,
+          session.approval,
+          name,
+          {},
+          false,
+        ),
+        name,
+      ).toBe(`${name} requires Human approval`);
+      expect(
+        grantToolExecutionDenial(
+          session.core,
+          session.assignment,
+          session.policy,
+          session.approval,
+          name,
+          {},
+          true,
+        ),
+        name,
+      ).toBeUndefined();
+    }
     expect(botTools).toContain('cloud_work');
     expect(exempt).not.toContain('cloud_work');
     expect(readFileSync(join(repo, 'packages/core/src/bots/cli-live.ts'), 'utf8')).toContain(

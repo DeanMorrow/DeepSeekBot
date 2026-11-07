@@ -1,0 +1,23 @@
+{
+  "kind": "SYNTHETIC_ONLY",
+  "purpose": "N6 desensitized isomorphic shape for cloud \u2014 NOT formal auth, NOT real registry dump",
+  "owner_card": "WAITING_USER \u2014 synthetic display below is TEST SAMPLE ONLY",
+  "source_candidate_ref": "tobs-fork-965b628f5 (unchanged; this fixture is external handoff)",
+  "no_real_paths": true,
+  "no_real_entry_ids": true,
+  "display_notice": "SYNTHETIC_TEST_SAMPLE_ONLY \u2014 NOT formal Owner authorization; Owner card still waiting user",
+  "entry_files": {
+    "syn-cat-beta.json": {
+      "kind": "SYNTHETIC_ONLY",
+      "path_label": "synthetic/categories/syn-cat-beta.json"
+    },
+    "syn-cat-alpha.json": {
+      "kind": "SYNTHETIC_ONLY",
+      "path_label": "synthetic/categories/syn-cat-alpha.json"
+    }
+  },
+  "catalog_source": {
+    "kind": "SYNTHETIC_ONLY",
+    "note": "Host config sample for repro; not a real DSH_HOME file"
+  }
+}

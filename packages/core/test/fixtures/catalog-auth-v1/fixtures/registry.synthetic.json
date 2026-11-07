@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "sourceRef": "ops:asset-catalog",
+  "version": 1,
+  "updatedAt": "2026-11-06T00:00:00+08:00",
+  "privacy": "SYNTHETIC-legacy-prose-not-auth",
+  "contract": "synthetic://contract.md",
+  "contract_version": "2",
+  "display": {
+    "audiences": ["profile-owner", "owner-bots"]
+  },
+  "inventories": [
+    {
+      "id": "syn-inv-a",
+      "name": "SYN-Name-A",
+      "brief": "SYN purpose A",
+      "entry": "entries/a.json",
+      "status": "active",
+      "version": 1,
+      "display": {
+        "audiences": ["profile-owner", "owner-bots"]
+      }
+    },
+    {
+      "id": "syn-inv-b",
+      "name": "SYN-Name-B",
+      "brief": "SYN purpose B",
+      "entry": "entries/b.json",
+      "status": "active",
+      "version": 1,
+      "display": {
+        "audiences": ["profile-owner", "owner-bots"]
+      }
+    }
+  ],
+  "categories": []
+}

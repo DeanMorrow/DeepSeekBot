@@ -1,0 +1,132 @@
+{
+  "frozen_at": "2026-11-06T15:50:14+08:00",
+  "draft_revision": "draft-rev2-20261106",
+  "note": "Real dual-bot run ONLY after cloud implements this contract. Do NOT claim pass on current sealed providers. Draft correction only — not implementation.",
+  "metadata_vs_sealed_impl": {
+    "authorized_semantics": "inventory/list metadata only; never source body",
+    "allowlist_intent": [
+      "id",
+      "name",
+      "purpose",
+      "trigger",
+      "brief",
+      "entryRef",
+      "status",
+      "version",
+      "updatedAt"
+    ],
+    "sealed_impl_view_actual": {
+      "projects": ["id", "brief", "sourceRef", "version", "updatedAt", "entryRef", "status"],
+      "does_not_project": ["name", "purpose", "trigger"],
+      "brief_derivation_note": "sealed inventoriesOf uses cleanText(brief)??cleanText(name); purpose/trigger not mapped into view"
+    },
+    "sealed_impl_open_actual": {
+      "projects_per_item": ["id", "name", "brief"],
+      "forbidden": ["follow entry/item pointers into skill/doc body", "return raw filesystem paths"]
+    },
+    "impl_requirement": "NEW Host may map purpose/trigger→brief or project them explicitly within allowlist; must document mapping; must NOT expand into body fields",
+    "tech_metadata_ok": ["version", "status", "updatedAt", "sourceRef"]
+  },
+  "hard_cases": [
+    {
+      "id": "H1",
+      "title": "two host-attested bots same owner, bound to THIS catalogOwner/approvalOwner, can view+open metadata",
+      "expect": "allow allowlist/projected metadata only; identity from Host session+Bot registry"
+    },
+    {
+      "id": "H2",
+      "title": "foreign owner bot denied",
+      "expect": "unauthorized; empty inventories; open false"
+    },
+    {
+      "id": "H3",
+      "title": "spoofed actor (forged kind/slug/ownerId without Host attestation) denied",
+      "expect": "unauthorized"
+    },
+    {
+      "id": "H4",
+      "title": "source body / unrelated file path denied",
+      "expect": "no body bytes; open must not follow entry pointers into bodies; no arbitrary file read"
+    },
+    {
+      "id": "H5",
+      "title": "view and open same gate",
+      "expect": "no open if view unauthorized; no view-only pierce"
+    },
+    {
+      "id": "H6",
+      "title": "revocation immediate",
+      "expect": "both bots fail closed after revoke binding"
+    },
+    {
+      "id": "H7",
+      "title": "real schema positive example",
+      "expect": "synthetic fixtures under CLOUD-SYNTHETIC/fixtures pass on NEW impl"
+    },
+    {
+      "id": "H8",
+      "title": "absolute entry path under trusted source mapping",
+      "expect": "resolve only via Host allow-roots bound to source; realpath/symlink/out-of-root deny; opaque entryRef only; missing file=unreachable without mkdir"
+    },
+    {
+      "id": "H9",
+      "title": "unknown audience token",
+      "expect": "layer deny (no silent ignore)"
+    },
+    {
+      "id": "H10",
+      "title": "privacy/contract handling",
+      "expect": "ONLY fingerprint-bound known string prose/pointer may be adapted AND §7 restrictions must execute; unknown/object/new-version/unproven → deny layer; byte-retain alone fails; warning-only gaps must not expose inventories"
+    },
+    {
+      "id": "H11",
+      "title": "explicit narrower private still wins",
+      "expect": "private/visibility deny despite owner-bots"
+    },
+    {
+      "id": "H12",
+      "title": "all-bots and bot:* must not authenticate",
+      "expect": "reject as unknown; never treat as owner-bots"
+    },
+    {
+      "id": "H13",
+      "title": "cross-catalog owner",
+      "expect": "bot whose owner matches a different catalog Owner but NOT this catalogOwner/approvalOwner → deny"
+    },
+    {
+      "id": "H14",
+      "title": "owner-bots without catalogOwner/approvalOwner Host binding",
+      "expect": "deny (session==bot.ownerId alone insufficient)"
+    },
+    {
+      "id": "H15",
+      "title": "registry.owner string or caller-supplied owner label used as approvalOwner",
+      "expect": "deny — not a trusted identity source"
+    },
+    {
+      "id": "H16",
+      "title": "known-legacy adapt missing §7 enforcement",
+      "expect": "non-compliant / deny — retain bytes without executing private-name/path and no-scan-private-store rules fails"
+    },
+    {
+      "id": "H17",
+      "title": "privacy or contract becomes object / unbound string / new contract_version",
+      "expect": "deny corresponding layer"
+    },
+    {
+      "id": "H18",
+      "title": "absolute path outside allow-root or symlink escapes parent chain",
+      "expect": "deny/unreachable; no path leak"
+    },
+    {
+      "id": "H19",
+      "title": "migration mirror entry path with no real file",
+      "expect": "unreachable; must not create empty directories"
+    },
+    {
+      "id": "H20",
+      "title": "open projects only item metadata allowlist",
+      "expect": "id/name/brief (or documented allowlist map); never skill/doc body content"
+    }
+  ]
+}

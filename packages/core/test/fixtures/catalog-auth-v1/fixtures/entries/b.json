@@ -1,0 +1,15 @@
+{
+  "registryId": "syn-inv-b",
+  "version": 1,
+  "updatedAt": "2026-11-06T00:00:00+08:00",
+  "display": {
+    "audiences": ["profile-owner", "owner-bots"]
+  },
+  "items": [
+    {
+      "id": "i2",
+      "name": "SYN-Item-2",
+      "brief": "meta only"
+    }
+  ]
+}

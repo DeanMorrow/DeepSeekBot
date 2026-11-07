@@ -1,0 +1,678 @@
+{
+  "schema_version": 2,
+  "commit": "c8e14533c128682477752125894403a72a657500",
+  "cost": "zero",
+  "execution_this_round": "NOT_RUN_SUT",
+  "v1_snapshot": "v1-snapshot/",
+  "disclaimer": "optimized_prompt values cited from prior text-eval adapted/native outputs OR constructed fixtures; NOT a live optimization service",
+  "evidence_levels": {
+    "L0_doc": "文档/合同断言 only",
+    "L1_data": "本 fixtures JSON 自洽 + validate.py",
+    "L2_route_cited": "引用既有 c8e14533c harness-v2（本轮不重跑）",
+    "L3_host": "宿主 call site — 未接",
+    "L4_image": "真实出图 — 未测"
+  },
+  "style_schema_proposal": {
+    "state": ["none", "selected", "disabled"],
+    "when_selected": {
+      "styleRef": "string|null optional",
+      "version": "string|null optional"
+    },
+    "note": "A/B are fixture styleRef values only, not enum of product"
+  },
+  "cases": [
+    {
+      "id": "F_STYLE_NONE",
+      "title": "无风格库选中；保留原文约束",
+      "maps_to": ["T1", "A1", "A2", "A9"],
+      "citation": {
+        "file": "../outputs/T1__prompt-pro-native.md",
+        "kind": "prior_text_eval_output",
+        "not_live_optimizer": true
+      },
+      "input": {
+        "raw_requirement": "给我一张横向游戏场景概念图，海边废弃渡轮码头，低机位，渡轮主体完整，锈蚀金属与湿木材清楚，不要文字或logo。",
+        "style": {
+          "state": "none",
+          "styleRef": null,
+          "version": null
+        },
+        "style_history_audit_only": [],
+        "references": [],
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1,
+        "operation_id": "op-t1-1",
+        "route_idempotency_key": "op-t1-1",
+        "input_fingerprint": "fp-t1-v1"
+      },
+      "expected": {
+        "submit_allowed": true,
+        "submit_prompt": "Landscape game concept art of an abandoned seaside ferry pier. Low camera angle. The ferry is fully visible as the complete main subject. Clear rusty metal and wet wood materials. No text, no logo, no watermark.",
+        "submit_prompt_must_not_contain_library_styles": true,
+        "route.submit": "allowed_if_integration_ready",
+        "integration_blocked_if_missing_host_context": true
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_STYLE_SELECTED",
+      "title": "选中库风格（fixture styleRef=A）",
+      "maps_to": ["T2", "A2"],
+      "citation": {
+        "file": "../outputs/T2__prompt-pro-native.md",
+        "kind": "prior_text_eval_output",
+        "not_live_optimizer": true
+      },
+      "input": {
+        "raw_requirement": "设计一个完整可见的维修机器人，单臂、履带，工具挂腰间，不能变双臂。用于角色建模参考，背景干净。",
+        "style": {
+          "state": "selected",
+          "styleRef": "fixture-A",
+          "version": "v1",
+          "def_fixture": "平涂、粗轮廓、暖灰橙"
+        },
+        "style_history_audit_only": [],
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1,
+        "operation_id": "op-t2-1",
+        "route_idempotency_key": "op-t2-1",
+        "input_fingerprint": "fp-t2-v1"
+      },
+      "expected": {
+        "submit_allowed": true,
+        "submit_prompt": "Clean-background character modeling reference of a full-body service robot, exactly one arm (single-arm, not dual-arm), tracked treads, tools hanging at the waist, entire robot visible. Medium: flat color, thick outlines, warm gray-orange palette.",
+        "submit_prompt_includes_selected_medium": true
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_STYLE_SWITCH_SELECTED",
+      "title": "库风格切换后仅选中项进 prompt（fixture B；A audit_only）",
+      "maps_to": ["T3", "A2"],
+      "citation": {
+        "file": "../outputs/T3__prompt-pro-adapted.md",
+        "kind": "prior_text_eval_adapted",
+        "not_live_optimizer": true
+      },
+      "input": {
+        "raw_requirement": "概念图：山城黄昏阶梯小巷，画面里只有一个快递员背影，全身可见。",
+        "style": {
+          "state": "selected",
+          "styleRef": "fixture-B",
+          "version": "v1",
+          "def_fixture": "水彩、低饱和蓝绿"
+        },
+        "style_history_audit_only": [
+          {
+            "styleRef": "fixture-A",
+            "def": "平涂、粗轮廓、暖灰橙",
+            "cleared": true
+          }
+        ],
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1,
+        "operation_id": "op-t3-1",
+        "route_idempotency_key": "op-t3-1",
+        "input_fingerprint": "fp-t3-v1"
+      },
+      "expected": {
+        "submit_allowed": true,
+        "submit_prompt": "Concept art of a mountain-city dusk stair alley. Only one courier seen from behind, full body visible, alone in frame. Medium: watercolor, low-saturation blue-green.",
+        "submit_prompt_must_not_contain": [
+          "平涂",
+          "粗轮廓",
+          "暖灰橙",
+          "warm gray-orange",
+          "flat-color",
+          "Do not use flat"
+        ],
+        "negative_fulltext_of_cleared_style_forbidden": true
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_STYLE_NONE_RAW_WATERCOLOR",
+      "title": "style.state=none 但原文明确水彩——保留原文审美，非库污染",
+      "maps_to": ["A2", "counterexample_3"],
+      "citation": {
+        "kind": "constructed_fixture",
+        "not_live_optimizer": true
+      },
+      "input": {
+        "raw_requirement": "概念图：雨巷行人，水彩质感，低饱和。",
+        "style": {
+          "state": "none",
+          "styleRef": null,
+          "version": null
+        },
+        "style_history_audit_only": [],
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1,
+        "operation_id": "op-wc-1",
+        "route_idempotency_key": "op-wc-1",
+        "input_fingerprint": "fp-wc-v1"
+      },
+      "expected": {
+        "submit_allowed": true,
+        "submit_prompt": "Concept art of pedestrians in a rainy alley, watercolor look, low saturation.",
+        "submit_prompt_must_preserve_raw_aesthetic_terms": [
+          "watercolor",
+          "水彩",
+          "low saturation",
+          "低饱和"
+        ],
+        "note": "禁的是未选中风格库污染，不是删除用户原文里的水彩/平涂等审美词"
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_STYLE_DISABLED_SUCCESS",
+      "title": "纯停用库风格、无冲突、可 submit",
+      "maps_to": ["A2", "counterexample_4"],
+      "citation": {
+        "kind": "constructed_fixture",
+        "not_live_optimizer": true
+      },
+      "input": {
+        "raw_requirement": "道具概念图：金属盾牌，正面，不要多视图。",
+        "style": {
+          "state": "disabled",
+          "styleRef": null,
+          "version": null
+        },
+        "style_history_audit_only": [
+          {
+            "styleRef": "fixture-A",
+            "cleared": true,
+            "disabled": true
+          }
+        ],
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1,
+        "operation_id": "op-dis-1",
+        "route_idempotency_key": "op-dis-1",
+        "input_fingerprint": "fp-dis-v1"
+      },
+      "expected": {
+        "submit_allowed": true,
+        "submit_prompt": "Prop concept art of a metal shield, front view only, no multi-view. No library style applied.",
+        "submit_prompt_must_not_contain_cleared_library": ["平涂", "暖灰橙", "fixture-A medium"],
+        "route.submit_calls_if_ready": 1
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_BLOCK_CONFLICT",
+      "title": "冲突+缺参考：控制层阻断，零 submit",
+      "maps_to": ["T4", "A3", "A8"],
+      "citation": {
+        "file": "../outputs/T4__prompt-pro-adapted.md",
+        "kind": "prior_text_eval_adapted",
+        "not_live_optimizer": true
+      },
+      "input": {
+        "raw_requirement": "道具概念图：完全透明但不透光的金属盾牌，正面，不要多视图，参考图R1保持纹样",
+        "style": {
+          "state": "disabled",
+          "styleRef": null,
+          "version": null
+        },
+        "references": [
+          {
+            "id": "R1",
+            "role": "pattern",
+            "status": "missing"
+          }
+        ],
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1,
+        "operation_id": "op-t4-1"
+      },
+      "expected": {
+        "submit_allowed": false,
+        "status": "BLOCKED",
+        "reasons": ["CONFLICT_transparent_vs_opaque", "MISSING_REFERENCE_R1"],
+        "submit_prompt": "",
+        "route.submit_calls": 0
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_EMPTY_RAW",
+      "title": "空需求：零 submit",
+      "maps_to": ["A1", "A10"],
+      "citation": {
+        "kind": "constructed_fixture"
+      },
+      "input": {
+        "raw_requirement": "",
+        "style": {
+          "state": "none",
+          "styleRef": null,
+          "version": null
+        },
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1,
+        "operation_id": "op-empty-1"
+      },
+      "expected": {
+        "submit_allowed": false,
+        "status": "BLOCKED",
+        "reasons": ["MISSING_RAW_REQUIREMENT"],
+        "route.submit_calls": 0
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_MISSING_HOST_CONTEXT",
+      "title": "缺 host context → integration-blocked（不向用户要 projectId）",
+      "maps_to": ["A9", "counterexample_1"],
+      "citation": {
+        "kind": "constructed_fixture"
+      },
+      "input": {
+        "raw_requirement": "给我一张横向游戏场景概念图，海边废弃渡轮码头，低机位，渡轮主体完整，锈蚀金属与湿木材清楚，不要文字或logo。",
+        "style": {
+          "state": "none",
+          "styleRef": null,
+          "version": null
+        },
+        "projectId": null,
+        "host_context_id": null,
+        "context_version": null,
+        "operation_id": "op-nohost-1"
+      },
+      "expected": {
+        "submit_allowed": false,
+        "status": "INTEGRATION_BLOCKED",
+        "reasons": ["HOST_CONTEXT_CONTRACT_MISSING"],
+        "must_not": ["ask_user_to_create_project_for_internal_id", "invent_global_project_service"],
+        "coordinator_action": "request_host_context_recovery_contract",
+        "route.submit_calls": 0
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_RETRY_SAME_OPERATION",
+      "title": "原操作重试：同 operation_id + 同 fingerprint → 复用原 route key",
+      "maps_to": ["A7", "counterexample_2"],
+      "citation": {
+        "kind": "constructed_fixture"
+      },
+      "input": {
+        "raw_requirement": "给我一张横向游戏场景概念图，海边废弃渡轮码头，低机位，渡轮主体完整，锈蚀金属与湿木材清楚，不要文字或logo。",
+        "submit_prompt": "Landscape game concept art of an abandoned seaside ferry pier. Low camera angle. The ferry is fully visible as the complete main subject. Clear rusty metal and wet wood materials. No text, no logo, no watermark.",
+        "style": {
+          "state": "none",
+          "styleRef": null,
+          "version": null
+        },
+        "operation_id": "op-t1-1",
+        "route_idempotency_key": "op-t1-1",
+        "input_fingerprint": "fp-t1-v1",
+        "attempt": 2,
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1
+      },
+      "expected": {
+        "submit_allowed": true,
+        "route_idempotency_key_unchanged": true,
+        "must_not_append_attempt_to_key": true,
+        "note": "requestId/operation_id 与 route key 语义不同；值可以相同；禁止仅因字符串相同阻断"
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_EXPLICIT_NEW_GENERATION",
+      "title": "显式新生成：即使 prompt 相同也新 operation_id",
+      "maps_to": ["A7", "counterexample_2", "counterexample_4"],
+      "citation": {
+        "kind": "constructed_fixture"
+      },
+      "input": {
+        "raw_requirement": "给我一张横向游戏场景概念图，海边废弃渡轮码头，低机位，渡轮主体完整，锈蚀金属与湿木材清楚，不要文字或logo。",
+        "submit_prompt": "Landscape game concept art of an abandoned seaside ferry pier. Low camera angle. The ferry is fully visible as the complete main subject. Clear rusty metal and wet wood materials. No text, no logo, no watermark.",
+        "style": {
+          "state": "none",
+          "styleRef": null,
+          "version": null
+        },
+        "operation_id": "op-t1-2",
+        "route_idempotency_key": "op-t1-2",
+        "input_fingerprint": "fp-t1-v1",
+        "explicit_new_generation": true,
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1
+      },
+      "expected": {
+        "submit_allowed": true,
+        "route_idempotency_key": "op-t1-2",
+        "distinct_from_prior_operation": "op-t1-1",
+        "same_prompt_ok": true
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_IDEM_DIFF_PAYLOAD_REJECT",
+      "title": "不同 payload 复用旧 key → 控制层拒绝",
+      "maps_to": ["A7"],
+      "citation": {
+        "kind": "constructed_fixture"
+      },
+      "input": {
+        "operation_id": "op-t1-1",
+        "route_idempotency_key": "op-t1-1",
+        "stored_fingerprint": "fp-t1-v1",
+        "new_submit_prompt": "DIFFERENT PROMPT BETA",
+        "new_fingerprint": "fp-t1-v2-diff",
+        "projectId": "fixture-project-a",
+        "context_version": 1
+      },
+      "expected": {
+        "submit_allowed": false,
+        "status": "BLOCKED",
+        "reasons": ["IDEMPOTENCY_KEY_PAYLOAD_MISMATCH"],
+        "route.submit_calls": 0,
+        "route_behavior_if_bypassed": "UNVERIFIED — consumer must not bypass"
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_CONTEXT_VERSION_REJECT",
+      "title": "上下文版本变化：拒收旧版本绑定，不只另定 requestId",
+      "maps_to": ["A9", "A11"],
+      "citation": {
+        "kind": "constructed_fixture"
+      },
+      "input": {
+        "operation_id": "op-t1-1",
+        "route_idempotency_key": "op-t1-1",
+        "bound_context_version": 1,
+        "current_context_version": 2,
+        "host_context_id": "fixture-ctx-1",
+        "projectId": "fixture-project-a"
+      },
+      "expected": {
+        "submit_allowed": false,
+        "status": "BLOCKED",
+        "reasons": ["CONTEXT_VERSION_MISMATCH"],
+        "must_not": [
+          "silently_continue_with_old_binding",
+          "only_mint_new_requestId_without_reject"
+        ],
+        "route.submit_calls": 0
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_CROSS_PROJECT",
+      "title": "跨项目同幂等键",
+      "maps_to": ["A6", "A12"],
+      "citation": {
+        "kind": "doc_cite_SEAM",
+        "route_evidence": "SEAM wrong-project"
+      },
+      "input": {
+        "route_idempotency_key": "idem-x",
+        "project_first": "fixture-project-a",
+        "project_second": "fixture-project-b"
+      },
+      "expected": {
+        "route_error_if_executed": "wrong-project",
+        "evidence": "L0_doc + SEAM 已证叙述；本轮未执行"
+      },
+      "evidence_level_now": "L0_doc",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_CANCEL_LATE",
+      "title": "取消后迟到完成：不自动挂载",
+      "maps_to": ["A6"],
+      "citation": {
+        "kind": "doc_cite_SEAM_ADDENDUM",
+        "route_evidence": "localStop; resume keeps remoteTaskId"
+      },
+      "input": {
+        "localStop": true,
+        "later_status": "completed",
+        "artifact_kind": "base64"
+      },
+      "expected": {
+        "auto_mount": false,
+        "may_keep_task_record": true,
+        "must_not_claim": ["remote_cancelled", "refund", "image_deleted"],
+        "accept_as_image": false
+      },
+      "evidence_level_now": "L0_doc",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_BAD_BASE64",
+      "title": "坏 base64 字符串仍可能 route completed",
+      "maps_to": ["A5", "A13"],
+      "citation": {
+        "route_evidence": "harness-v2 garbage_b64_still_completed",
+        "rerun": false
+      },
+      "input": {
+        "provider_b64_json": "%%%not-base64%%%"
+      },
+      "expected": {
+        "route_observed_prior": {
+          "status": "completed",
+          "kind": "base64"
+        },
+        "consumer_accept": false,
+        "fail_stage": "syntax_or_decode"
+      },
+      "evidence_level_now": "L2_route_cited",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_JSON_AS_B64",
+      "title": "合法 base64 编码的 JSON 文本 — 拒绝为图",
+      "maps_to": ["A5", "A13", "counterexample_5"],
+      "citation": {
+        "kind": "constructed_fixture_pure_data"
+      },
+      "input": {
+        "artifact_kind": "base64",
+        "value_b64": "eyJub3QiOiJhbiBpbWFnZSIsImI2NF9qc29uIjp0cnVlfQ==",
+        "decoded_utf8_preview": "{\"not\":\"an image\",\"b64_json\":true}"
+      },
+      "expected": {
+        "base64_syntax": "pass",
+        "image_parse": "fail",
+        "consumer_accept": false,
+        "reason": "decoded_bytes_are_json_not_complete_image"
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_TRUNCATED_PNG_HEADER",
+      "title": "仅 PNG 头/截断 PNG — 拒绝",
+      "maps_to": ["A5", "A13", "counterexample_5"],
+      "citation": {
+        "kind": "constructed_fixture_pure_data"
+      },
+      "input": {
+        "artifact_kind": "base64",
+        "value_b64": "iVBORw0KGgoAAAANSUhEUgAA",
+        "note": "starts with PNG signature but incomplete IHDR/truncated"
+      },
+      "expected": {
+        "base64_syntax": "pass",
+        "complete_image_parse": "fail",
+        "consumer_accept": false,
+        "reason": "truncated_or_incomplete_image_bytes"
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_FAKE_URL",
+      "title": "假 URL → untrusted-url 未 fetch",
+      "maps_to": ["A5"],
+      "citation": {
+        "route_evidence": "harness-v2 junk_url_*",
+        "rerun": false
+      },
+      "input": {
+        "provider_url": "not-a-url-but-nonempty"
+      },
+      "expected": {
+        "route_observed_prior": {
+          "status": "completed",
+          "kind": "untrusted-url",
+          "fetched": false
+        },
+        "consumer_accept": false,
+        "default_fetch": false
+      },
+      "evidence_level_now": "L2_route_cited",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_EMPTY_ARTIFACT",
+      "title": "空产物",
+      "maps_to": ["A5"],
+      "citation": {
+        "route_evidence": "harness-v2 blank_*",
+        "rerun": false
+      },
+      "input": {
+        "provider_field": "blank"
+      },
+      "expected": {
+        "route_observed_prior": {
+          "status": "failed",
+          "error": "empty-artifact"
+        },
+        "consumer_accept": false
+      },
+      "evidence_level_now": "L2_route_cited",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_ERROR_RESIDUAL_ACCEPT_GATE",
+      "title": "残 error：status+kind 不足；全闸才 accept；不改写 route.error",
+      "maps_to": ["A5", "A13", "counterexample_6"],
+      "citation": {
+        "route_evidence": "PARENT-CORRECTION §5 / harness-v2 error_residual_*",
+        "rerun": false
+      },
+      "input": {
+        "status": "completed",
+        "artifact_kind": "untrusted-url",
+        "error": "provider-failed",
+        "localStop": false,
+        "context_version_match": true,
+        "ownership_ok": true,
+        "content_fingerprint_ok": true,
+        "media_validation": "pending"
+      },
+      "expected": {
+        "accept_requires_all": [
+          "status==completed",
+          "artifact.kind in consumer_supported",
+          "localStop==false",
+          "current_context_match",
+          "correct_ownership",
+          "content_fingerprint_ok",
+          "full_media_validation_pass"
+        ],
+        "status_plus_kind_alone": "NOT_sufficient",
+        "route_error_handling": {
+          "do_not_rewrite_route_error": true,
+          "label": "stale_provider_error",
+          "retain_original_error_text": true,
+          "consumer_verdict_separate": true
+        },
+        "if_untrusted_url_without_trusted_fetch": "accept=false"
+      },
+      "evidence_level_now": "L2_route_cited",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    },
+    {
+      "id": "F_REF_LOCAL_BUT_ROUTE_PROMPT_ONLY",
+      "title": "参考本地存在但 route 仅 prompt → 控制层 BLOCK，禁止静默丢弃",
+      "maps_to": ["A8", "A14", "counterexample_7"],
+      "citation": {
+        "kind": "constructed_fixture"
+      },
+      "input": {
+        "raw_requirement": "角色概念图，保持参考图R2服饰纹样",
+        "style": {
+          "state": "none",
+          "styleRef": null,
+          "version": null
+        },
+        "references": [
+          {
+            "id": "R2",
+            "role": "costume_pattern",
+            "status": "present_local",
+            "bytes_available": true
+          }
+        ],
+        "route_submit_supports_reference_bytes": false,
+        "projectId": "fixture-project-a",
+        "host_context_id": "fixture-ctx-1",
+        "context_version": 1,
+        "operation_id": "op-ref-1"
+      },
+      "expected": {
+        "submit_allowed": false,
+        "status": "BLOCKED",
+        "reasons": ["REFERENCE_REQUIRED_BUT_ROUTE_PROMPT_ONLY"],
+        "forbidden": ["silently_drop_reference", "paraphrase_reference_into_prompt_and_claim_used"],
+        "route.submit_calls": 0
+      },
+      "evidence_level_now": "L1_data",
+      "execution": "data_only_not_executed",
+      "pass_this_round": null
+    }
+  ]
+}

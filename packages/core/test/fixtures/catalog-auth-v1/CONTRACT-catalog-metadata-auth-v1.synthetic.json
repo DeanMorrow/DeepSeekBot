@@ -1,0 +1,108 @@
+{
+  "authz_schema_version": 1,
+  "id": "syn-catalog-metadata-auth-v1",
+  "status": "synthetic-spec-for-cloud-impl",
+  "draft_revision": "draft-rev2-20261106",
+  "audience_tokens": {
+    "profile-owner": "existing",
+    "bot:<slug>": "existing-exact-match-only",
+    "owner-bots": "PROPOSED-must-implement",
+    "all-bots": "FORBIDDEN-not-a-token",
+    "bot:*": "FORBIDDEN-unknown-causes-layer-deny"
+  },
+  "identity_sources": {
+    "profile-owner": "authenticated Host session only (not registry.owner string, not caller-supplied labels)",
+    "bot": "authenticated Host session + authoritative Bot-registry ownership edge",
+    "missing_or_unknown_attestation": "deny"
+  },
+  "caller_attestation_required": {
+    "profile-owner": {
+      "kind": "profile-owner",
+      "sessionOwnerId": "<host-attested>"
+    },
+    "bot": {
+      "kind": "bot",
+      "slug": "<slug>",
+      "ownerId": "<host-attested-from-bot-registry>",
+      "note": "ownerId and kind/slug MUST be Host-attested; caller JSON alone is not proof"
+    }
+  },
+  "catalog_owner_binding": {
+    "fields": ["catalogOwner", "approvalOwner"],
+    "source": "trusted Host configuration bound to approval record fingerprint (NOT registry.owner, NOT request parameters)",
+    "admit_owner_bots": [
+      "token owner-bots present in layer audiences",
+      "Host attests bot.ownerId == session.ownerId",
+      "session.ownerId == Host-config catalogOwner",
+      "session.ownerId == Host-config approvalOwner",
+      "authoritative Bot-registry edge confirms bot.slug owned by that ownerId"
+    ],
+    "cross_catalog_owner": "deny when bot/session owner equals some other catalog Owner but not THIS catalogOwner/approvalOwner binding"
+  },
+  "admit_rule": "exact token match OR (token==owner-bots AND all catalog_owner_binding.admit_owner_bots predicates true)",
+  "metadata_field_contract": {
+    "authorized_semantics": "inventory/list metadata only; never source body",
+    "allowlist_intent": [
+      "id",
+      "name",
+      "purpose",
+      "trigger",
+      "brief",
+      "entryRef",
+      "status",
+      "version",
+      "updatedAt"
+    ],
+    "sealed_impl_view_actual": {
+      "projects": ["id", "brief", "sourceRef", "version", "updatedAt", "entryRef", "status"],
+      "does_not_project": ["name", "purpose", "trigger"],
+      "brief_derivation_note": "sealed inventoriesOf uses cleanText(brief)??cleanText(name); purpose/trigger not mapped into view"
+    },
+    "sealed_impl_open_actual": {
+      "projects_per_item": ["id", "name", "brief"],
+      "forbidden": ["follow entry/item pointers into skill/doc body", "return raw filesystem paths"]
+    },
+    "impl_requirement": "NEW Host may map purpose/trigger→brief or project them explicitly within allowlist; must document mapping; must NOT expand into body fields",
+    "tech_metadata_ok": ["version", "status", "updatedAt", "sourceRef"]
+  },
+  "entryRef": "syn:ops-catalog#<id>",
+  "absolute_path_policy": {
+    "resolve_via": "Host-configured trusted source mapping / allow-roots bound to the authorized catalog sourceRef",
+    "checks": [
+      "realpath",
+      "parent-chain within allow-root",
+      "reject symlink escape",
+      "reject out-of-root"
+    ],
+    "forbidden": [
+      "arbitrary absolute resolve merely because open is authorized",
+      "echo raw FS path in view/open payloads (authorized or not)",
+      "mkdir / fabricate empty dirs when migration mirror lacks real file"
+    ],
+    "missing_file": "unreachable (do not create placeholder trees)",
+    "open_may_read": "only the inventory entry JSON to project allowlisted item metadata",
+    "open_must_not_read": "any body/document/skill file that an item or entry field further points to"
+  },
+  "known_legacy_privacy_contract_adapt": {
+    "not": "blanket-non-auth classification or byte-retain-without-enforcement",
+    "only_when": [
+      "privacy is string AND sha256(privacy)||exact-bound fingerprint matches approval-bound known formal prose",
+      "contract is string path AND target CONTRACT.md sha256 matches approval-bound fingerprint",
+      "contract_version is the bound known document version string"
+    ],
+    "when_adapted_MUST_enforce": [
+      "CONTRACT §7: private inventory names/paths must not be written into public registry",
+      "do not scan other Bot private stores"
+    ],
+    "still_deny_layer_when": [
+      "privacy/contract value type is object/array/non-string",
+      "string content does not match bound fingerprints",
+      "contract_version unknown/newer/unbound",
+      "unproven or alternate contract document",
+      "restrictions cannot be executed by Host"
+    ],
+    "byte_retention_alone": "insufficient — retention without executing §7 restrictions is non-compliant"
+  },
+  "unknown": "deny",
+  "revocation": "immediate fail-closed; view and open same gate"
+}

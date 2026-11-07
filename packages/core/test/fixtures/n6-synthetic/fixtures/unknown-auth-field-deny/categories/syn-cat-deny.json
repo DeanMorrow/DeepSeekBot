@@ -1,0 +1,12 @@
+{
+  "registryId": "syn-cat-deny",
+  "version": 1,
+  "updatedAt": "2026-11-06T00:00:00.000Z",
+  "items": [
+    {
+      "id": "syn-item-999",
+      "name": "SYNTHETIC Hidden",
+      "brief": "SYNTHETIC must not leak"
+    }
+  ]
+}

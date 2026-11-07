@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "id": "tobs-thinking-catalog",
+  "role": "registry",
+  "entry": ".botharness/catalog/index.json",
+  "owner": "tobs-thinking-seed",
+  "brief": "只登记有哪些清单、各自的职责和唯一入口。不收录条目全文，也不收录私有清单的标题或路径。",
+  "version": 1,
+  "updatedAt": "2026-11-05T20:49:00.000Z",
+  "status": "active",
+  "inventories": [
+    {
+      "id": "skills",
+      "brief": "本 Bot 记忆里已放置的技能简介。正文在各自的 SKILL 文件。",
+      "entry": ".botharness/catalog/skills.json",
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "active",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:skills"
+    },
+    {
+      "id": "bots",
+      "brief": "本 Bot 名下的 Bot 资产。不足 4 个时没有条目文件。",
+      "entry": null,
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "unpopulated",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:bots"
+    },
+    {
+      "id": "plugin-tools",
+      "brief": "本 Bot 可用的插件工具。不足 4 个时没有条目文件。",
+      "entry": null,
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "unpopulated",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:plugin-tools"
+    },
+    {
+      "id": "modules",
+      "brief": "本 Bot 记忆里的项目模块。不足 4 个时没有条目文件。",
+      "entry": null,
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "unpopulated",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:modules"
+    },
+    {
+      "id": "templates",
+      "brief": "本 Bot 记忆里的素材模板。不足 4 个时没有条目文件。",
+      "entry": null,
+      "owner": "tobs-thinking-seed",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "unpopulated",
+      "authority": "bot-memory",
+      "sourceRef": "bot-memory:templates"
+    },
+    {
+      "id": "ops-asset-catalog",
+      "brief": "盒上全局资产目录的引用。条目留在 ops 权威域，不复制进本 Bot。",
+      "entry": null,
+      "owner": "ops",
+      "version": 1,
+      "updatedAt": "2026-11-05T20:49:00.000Z",
+      "status": "active",
+      "authority": "ops",
+      "sourceRef": "ops:asset-catalog"
+    }
+  ],
+  "revisions": [
+    {
+      "version": 1,
+      "reason": "register the skill brief inventory",
+      "verification": "entries-exist"
+    }
+  ]
+}

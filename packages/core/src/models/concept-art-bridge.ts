@@ -1,0 +1,251 @@
+import type { AttachmentStore } from '../attachments/store.js';
+import type { ConceptArtRequest, createConceptArtConsumer } from './concept-art-consumer.js';
+import { SharedRouteError, type createSharedModelRoute } from './shared-route.js';
+
+type Consumer = ReturnType<typeof createConceptArtConsumer>;
+type Route = ReturnType<typeof createSharedModelRoute>;
+
+type BridgeResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: { code: string; message: string } };
+
+function invalid(message: string): BridgeResult<never> {
+  return { ok: false, error: { code: 'invalid-input', message } };
+}
+
+function failed(error: unknown): BridgeResult<unknown> {
+  if (error instanceof SharedRouteError) {
+    return { ok: false, error: { code: error.reason, message: error.message } };
+  }
+  if (typeof error === 'object' && error !== null) {
+    const status = (error as { status?: unknown }).status;
+    const reasons = (error as { reasons?: unknown }).reasons;
+    if (typeof status === 'string' && Array.isArray(reasons)) {
+      return { ok: true, value: { status, reasons, submitCalls: 0, optimization: 'chat-model' } };
+    }
+  }
+  return { ok: false, error: { code: 'unavailable', message: 'Concept art is not available.' } };
+}
+
+function requestBody(value: unknown): ConceptArtRequest | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const body = value as Record<string, unknown>;
+  const style = body['style'];
+  if (typeof body['raw_requirement'] !== 'string') return undefined;
+  if (typeof style !== 'object' || style === null) return undefined;
+  const state = (style as { state?: unknown }).state;
+  if (state !== 'none' && state !== 'selected' && state !== 'disabled') return undefined;
+  if (typeof body['sessionId'] !== 'string' && body['sessionId'] !== null) return undefined;
+  if (typeof body['operation_id'] !== 'string' || typeof body['route_idempotency_key'] !== 'string')
+    return undefined;
+  if (typeof body['input_fingerprint'] !== 'string' || typeof body['submit_allowed'] !== 'boolean')
+    return undefined;
+  if (typeof body['context_version'] !== 'string' && typeof body['context_version'] !== 'number')
+    return undefined;
+  return body as unknown as ConceptArtRequest;
+}
+
+export function createConceptArtBridge(input: {
+  conceptArt?: Consumer;
+  sharedRoute?: Route;
+  attachments?: AttachmentStore;
+  sessionForBot?: (botSlug: string) => string | null;
+}) {
+  return {
+    async conceptArt(payload: unknown): Promise<BridgeResult<unknown>> {
+      if (input.conceptArt === undefined || input.sharedRoute === undefined) {
+        return {
+          ok: false,
+          error: { code: 'unavailable', message: 'Concept art is not on this Host.' },
+        };
+      }
+      const body =
+        typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {};
+      const action = body['action'];
+      try {
+        if (action === 'status') {
+          const image = await input.sharedRoute.describeConsumer('concept-art', 'image');
+          const chat = await input.sharedRoute.describeConsumer('chat', 'chat');
+          return {
+            ok: true,
+            value: {
+              ...image,
+              chatReady: chat.locked && chat.credentialConfigured,
+              limitsConfigured: input.conceptArt.limitsConfigured(),
+              mediaDelivery: input.conceptArt.limitsConfigured() ? 'parsed-not-verified' : 'closed',
+              referenceImages: 'blocked-prompt-only',
+            },
+          };
+        }
+        if (action === 'open') {
+          const botSlug = body['botSlug'];
+          if (typeof botSlug !== 'string' || botSlug.trim() === '')
+            return invalid('Bot is required.');
+          const sessionId = input.sessionForBot?.(botSlug) ?? null;
+          if (sessionId === null) {
+            return {
+              ok: true,
+              value: {
+                status: 'INTEGRATION_BLOCKED',
+                reasons: ['HOST_CONTEXT_CONTRACT_MISSING'],
+                botSlug,
+              },
+            };
+          }
+          const owner = input.conceptArt.ownerBot(sessionId);
+          if (owner !== botSlug) {
+            return {
+              ok: true,
+              value: { status: 'BLOCKED', reasons: ['BOT_SESSION_MISMATCH'], botSlug },
+            };
+          }
+          const project = input.conceptArt.projectIdFor(sessionId);
+          if ('status' in project) return { ok: true, value: { ...project, botSlug } };
+          return {
+            ok: true,
+            value: { status: 'READY', botSlug, sessionId, projectId: project.projectId },
+          };
+        }
+        if (action === 'styles') {
+          const sessionId = body['sessionId'];
+          const explicit = body['botSlug'];
+          const botSlug =
+            typeof explicit === 'string'
+              ? explicit
+              : typeof sessionId === 'string'
+                ? input.conceptArt.ownerBot(sessionId)
+                : undefined;
+          if (botSlug === undefined) return invalid('Bot or session is required.');
+          if (typeof sessionId === 'string' && input.conceptArt.ownerBot(sessionId) !== botSlug) {
+            return {
+              ok: true,
+              value: { status: 'BLOCKED', reasons: ['BOT_SESSION_MISMATCH'], botSlug },
+            };
+          }
+          return {
+            ok: true,
+            value: {
+              styles: input.conceptArt.listStyles(botSlug),
+              unassignedCount: input.conceptArt.listUnassigned().length,
+            },
+          };
+        }
+        if (action === 'generateStyle') {
+          const styleRef = body['styleRef'];
+          const note = body['note'];
+          const sessionId = body['sessionId'];
+          if (typeof styleRef !== 'string' || typeof note !== 'string')
+            return invalid('Style reference and note are required.');
+          if (typeof sessionId !== 'string' && sessionId !== null)
+            return invalid('Session is required.');
+          return {
+            ok: true,
+            value: await input.conceptArt.generateStyle({
+              sessionId: sessionId as string | null,
+              styleRef,
+              note,
+            }),
+          };
+        }
+        if (action === 'request') {
+          const request = requestBody(body['request']);
+          if (request === undefined) return invalid('Concept art request is incomplete.');
+          return { ok: true, value: await input.conceptArt.request(request) };
+        }
+        if (action === 'resume' || action === 'cancel') {
+          if (typeof body['sessionId'] !== 'string' || typeof body['idempotencyKey'] !== 'string')
+            return invalid('Session and operation key are required.');
+          const task =
+            action === 'resume'
+              ? await input.conceptArt.resume(body['sessionId'], body['idempotencyKey'])
+              : input.conceptArt.cancel(body['sessionId'], body['idempotencyKey']);
+          return { ok: true, value: task };
+        }
+        if (action === 'accept') {
+          if (
+            typeof body['sessionId'] !== 'string' ||
+            typeof body['idempotencyKey'] !== 'string' ||
+            (typeof body['contextVersion'] !== 'string' &&
+              typeof body['contextVersion'] !== 'number')
+          )
+            return invalid('Session, operation key and context version are required.');
+          const project = input.conceptArt.projectIdFor(body['sessionId']);
+          if ('status' in project)
+            return { ok: true, value: { ...project, optimization: 'not-performed' } };
+          const task = input.sharedRoute.read(project.projectId, body['idempotencyKey']);
+          const verdict = input.conceptArt.accept(task, body['contextVersion'] as string | number);
+          if (
+            !verdict.accept ||
+            task.localStop === true ||
+            task.artifact?.kind !== 'base64' ||
+            task.artifact.value === undefined ||
+            input.attachments === undefined
+          ) {
+            return {
+              ok: true,
+              value: { ...verdict, delivery: 'not-mounted', mediaVerified: false },
+            };
+          }
+          const bytes = Buffer.from(task.artifact.value, 'base64');
+          const ref = await input.attachments.upload({
+            data: (async function* () {
+              yield bytes;
+            })(),
+            name: 'concept-art.png',
+          });
+          const saved = input.attachments.current(ref);
+          if (saved.size !== bytes.length || saved.fileId === undefined) {
+            return {
+              ok: true,
+              value: {
+                ...verdict,
+                delivery: 'not-mounted',
+                userVisible: false,
+                mediaVerified: false,
+              },
+            };
+          }
+          const downloaded = await input.attachments.download(saved.fileId, saved.name);
+          const chunks: Uint8Array[] = [];
+          const reader = downloaded.body.getReader();
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            if (chunk.value !== undefined) chunks.push(chunk.value);
+          }
+          const stored = Buffer.concat(chunks);
+          if (!stored.equals(bytes)) {
+            return {
+              ok: true,
+              value: {
+                ...verdict,
+                delivery: 'not-mounted',
+                userVisible: false,
+                mediaVerified: false,
+              },
+            };
+          }
+          return {
+            ok: true,
+            value: {
+              ...verdict,
+              parsed: true,
+              deliverable: true,
+              userVisible: true,
+              mediaVerified: false,
+              quality: 'unverified',
+              reason: 'BYTES_PARSED_NOT_A_RENDER',
+              delivery: 'mounted-unverified',
+              imageSource: 'attachment-readback',
+              file: { fileId: saved.fileId, name: saved.name, size: saved.size },
+              preview: stored.toString('base64'),
+            },
+          };
+        }
+        return invalid('Concept art action is not status, request, resume, cancel or accept.');
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  };
+}

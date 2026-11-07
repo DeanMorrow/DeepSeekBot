@@ -78,6 +78,7 @@ import {
   type ChannelComposerActivity,
   type ChannelComposerUpload,
 } from './channel-composer.js';
+import { ConceptArtSection, conceptArtCall } from './concept-art-section.js';
 import { PanelDialog } from './ds/panel-dialog.js';
 import { ConversationSessionStop, useHeaderSessionStop } from './header-session-stop.js';
 import { runningSessionCount, runningSessionGroups } from './session-stop-model.js';
@@ -1122,11 +1123,12 @@ function ConversationView({
   const sidebar = useChannelSidebar(state);
   const docked = useChannelDockActive();
   const workspaceEnabled = useContext(WorkspaceContext) !== undefined;
-  const [detail, setDetail] = useScopedState<'files' | 'inbox' | undefined>(
+  const [detail, setDetail] = useScopedState<'files' | 'inbox' | 'concept' | undefined>(
     scopeKey,
     state.selection?.kind === 'bot' && state.selection.inboxRequest ? 'inbox' : undefined,
   );
   const filesOpen = detail === 'files';
+  const conceptOpen = detail === 'concept';
   const inboxOpen = detail === 'inbox';
   const setFilesOpen = (open: boolean) => setDetail(open ? 'files' : undefined);
   const setInboxOpen = (open: boolean) => setDetail(open ? 'inbox' : undefined);
@@ -2850,6 +2852,20 @@ function ConversationView({
                 </IconButton>
               </span>
             )}
+            {onMobileBack === undefined &&
+              channel?.type === 'dm' &&
+              profileBot !== undefined &&
+              profileBot.deleted !== true && (
+                <span className="bh-channel-island-wrap">
+                  <IconButton
+                    aria-label={t('botSettings.section.conceptArt')}
+                    aria-expanded={conceptOpen}
+                    onClick={() => setDetail(conceptOpen ? undefined : 'concept')}
+                  >
+                    <ChannelSidebarIcon name="flask-conical" />
+                  </IconButton>
+                </span>
+              )}
             {!workspaceEnabled &&
               onMobileBack === undefined &&
               channel?.type === 'dm' &&
@@ -3643,6 +3659,15 @@ function ConversationView({
                       actions: (
                         <>
                           {profileBot !== undefined && profileBot.deleted !== true && (
+                            <IconButton
+                              aria-label={t('botSettings.section.conceptArt')}
+                              aria-expanded={conceptOpen}
+                              onClick={() => setDetail(conceptOpen ? undefined : 'concept')}
+                            >
+                              <ChannelSidebarIcon name="flask-conical" />
+                            </IconButton>
+                          )}
+                          {profileBot !== undefined && profileBot.deleted !== true && (
                             <DmCallControl
                               slug={profileBot.slug}
                               name={profileBot.displayName}
@@ -3708,6 +3733,20 @@ function ConversationView({
             />
           ) : (
             chatPane
+          )}
+          {conceptOpen && profileBot !== undefined && (
+            <PanelDialog
+              title={t('botSettings.section.conceptArt')}
+              closeLabel={t('dock.close', { label: t('botSettings.section.conceptArt') })}
+              onClose={() => setDetail(undefined)}
+              scroll
+            >
+              <ConceptArtSection
+                botSlug={profileBot.slug}
+                call={conceptArtCall(actions.conceptArt)}
+                t={t}
+              />
+            </PanelDialog>
           )}
           {!workspaceEnabled && filesOpen && channelId !== undefined && (
             <PanelDialog

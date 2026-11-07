@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "sourceRef": "ops:asset-catalog",
+  "version": 1,
+  "updatedAt": "2026-11-06T00:00:00+08:00",
+  "privacy": "SYNTHETIC-legacy-prose-not-auth",
+  "contract": "synthetic://contract.md",
+  "contract_version": "2",
+  "display": {
+    "audiences": ["profile-owner", "owner-bots"]
+  },
+  "inventories": [
+    {
+      "id": "syn-abs-1",
+      "name": "SYN-Abs",
+      "brief": "SYN abs purpose",
+      "entry": "/synthetic/root/only/inside/authorized/resolver/entry.json",
+      "status": "active",
+      "version": 1,
+      "display": {
+        "audiences": ["profile-owner", "owner-bots"]
+      }
+    }
+  ],
+  "categories": []
+}

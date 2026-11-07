@@ -737,6 +737,7 @@ export interface BridgeActions {
   dismissFailedMessage(channelId: string, messageId: string): boolean;
   openSession(sessionId: string): void;
   refreshSessions(slug: string): Promise<void>;
+  conceptArt?(payload: Record<string, unknown>): Promise<unknown>;
   readSessions(slug: string): Promise<OwnedSessionSummary[]>;
   setSessionArchived(slug: string, sessionId: string, archived: boolean): Promise<void>;
   stopSession(
@@ -3159,6 +3160,9 @@ export function createActions(
     memoryVersions: (channelId) => loadMemoryVersions(call, channelId),
     memorySave: (input) => saveMemoryFile(call, input),
     memoryRepair: (input) => repairMemory(call, input),
+    conceptArt(payload) {
+      return invoke('conceptArt', payload);
+    },
     openSession(sessionId) {
       if (folderAccess?.openSession === undefined)
         throw new Error('DSH Session navigation is unavailable');

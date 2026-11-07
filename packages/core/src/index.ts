@@ -249,3 +249,22 @@ export type { ToolDetail, ToolDetailRead, ToolDetailRefusal } from './state/tool
 export { PERSONABOT_OUTPUT_COMMITTED, personaBotOutputCommitted } from './channels/output.js';
 export type { PersonaBotOutputCommitted } from './channels/output.js';
 export type { ChannelMessageOrigin } from './channels/store.js';
+
+export {
+  cancelSuperAgentRun,
+  runSuperAgent,
+  sealWorkOrders,
+} from './runtime/super-agent-dispatch.js';
+export { createSuperAgentLedger, parseWorkOrders } from './runtime/super-agent-ledger.js';
+export {
+  createWorkOrderAuthority,
+  noteSuperAgentApproval,
+  orchestratorToolScope,
+  sealToolInput,
+} from './runtime/super-agent-authority.js';
+export { createToolApprovalRuleStore } from './workspaces/tool-approval-rules.js';
+export {
+  openAuthorizedOpsEntry,
+  readAuthorizedOpsCatalog,
+  OPS_CATALOG_SOURCE,
+} from './memory/catalog-source.js';

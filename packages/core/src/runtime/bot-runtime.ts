@@ -161,6 +161,8 @@ import type {
 import { DEFAULT_PROMPT_TEXT, type PromptText } from '../prompts/prompt-parts.js';
 import { DEFAULT_PROMPT_LIMITS, type PromptLimits } from '../prompts/prompt-limits.js';
 import { isBotSubagentModelTool } from './subagent-model-tools.js';
+import { createSuperAgentLedger, type SuperAgentLedger } from './super-agent-ledger.js';
+import { createWorkOrderAuthority, type WorkOrderAuthority } from './super-agent-authority.js';
 
 export type AssignmentActivity = 'working' | 'idle' | 'error' | 'stopping' | 'stopped';
 export type AssignmentReportState =
@@ -450,6 +452,8 @@ export interface OrchestratorAgentRun {
     resetImmediateDelivery(sourceClass: 'human-dm' | 'bot-dm' | 'group-mention'): BotSourcePolicy;
   };
   assignments: OrchestratorAssignmentAccess;
+  superAgent?: SuperAgentLedger;
+  workOrderAuthority?: WorkOrderAuthority;
   schedules?: {
     list(): BotSchedule[];
     create(input: BotScheduleInput): BotSchedule;
@@ -850,6 +854,7 @@ export interface BotRuntime {
   listAssignments(botSlug: string): AssignmentSummary[];
   latestAssignmentActivity?(): ReadonlyMap<string, number>;
   currentOrchestratorSessionId?(botSlug: string): string | undefined;
+  ensureOrchestratorSessionId?(botSlug: string): string | undefined;
   replaceOrchestrator?<T>(botSlug: string, body: () => T): Promise<OrchestratorReplacement<T>>;
   startFreshOrchestrator?(botSlug: string, assertCurrent?: () => void): Promise<'started' | 'busy'>;
   turnRunning?(botSlug: string): boolean;
@@ -4750,6 +4755,13 @@ class BotRuntimeImplementation implements BotRuntime {
       )?.sessionId;
   }
 
+  /** Claim this Bot's orchestrator session the same way a normal turn does. */
+  ensureOrchestratorSessionId(botSlug: string): string | undefined {
+    const bot = this.#registry.get(botSlug);
+    if (bot === undefined || bot.paused === true) return undefined;
+    return this.#ensureOrchestrator(bot, this.#now().toISOString()).sessionId;
+  }
+
   latestAssignmentActivity(): ReadonlyMap<string, number> {
     return this.#database.read((database) => {
       const rows = database
@@ -6223,6 +6235,8 @@ class BotRuntimeImplementation implements BotRuntime {
             },
           }
         : {}),
+      superAgent: createSuperAgentLedger(this.#database),
+      workOrderAuthority: createWorkOrderAuthority(this.#database),
       assignments: this.#assignmentAccess(
         bot,
         turn.sourceEventId,
@@ -8841,6 +8855,17 @@ class BotRuntimeImplementation implements BotRuntime {
     const createdAt = this.#now().toISOString();
     this.#database.transaction(
       (database) => {
+        if (sourceEventId.startsWith('direct-')) {
+          database
+            .prepare(
+              `INSERT INTO source_events (
+                 source_event_id, source_kind, bot_slug, body, created_at, attempt_state
+               )
+               SELECT ?, 'human-message', ?, ?, ?, 'handled'
+               WHERE NOT EXISTS (SELECT 1 FROM source_events WHERE source_event_id = ?)`,
+            )
+            .run(sourceEventId, bot.slug, 'Direct super-agent request', createdAt, sourceEventId);
+        }
         const cwdReference = permission.primaryCwd;
         this.#ownership.claimWithin(database, {
           sessionId,

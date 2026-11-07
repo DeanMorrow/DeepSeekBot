@@ -88,6 +88,7 @@ import {
   AutoApprovalSection,
   PromptsSection,
   VoiceSection,
+  ConceptArtSection,
 } from './bot-settings-sections.js';
 import { PluginsSection } from './plugin-updates-view.js';
 import { ReleaseNotesController } from './release-notes.js';
@@ -983,6 +984,19 @@ export function apply(ctx: ClientContext): void {
           inject: () => ({ actions }),
         },
         VoiceSection,
+      ),
+    );
+    settingsCtx.slots.inject('botharness.settings.section', () =>
+      settingsCtx.slots.register(
+        {
+          name: 'botharness.settings.section',
+          id: BOT_SETTINGS_SECTIONS.conceptArt,
+          order: 18,
+          label: () => t('botSettings.section.conceptArt'),
+          locale: LOCALE_NS,
+          inject: () => ({ call }),
+        },
+        ConceptArtSection,
       ),
     );
     settingsCtx.slots.inject('botharness.settings.section', () =>

@@ -1,0 +1,9 @@
+{
+  "kind": "SYNTHETIC_ONLY",
+  "purpose": "Positive contrast: same categories\u2192inventories\u2192entry association, catalog-source ROOT/CATEGORY/ENTRY whitelist-safe",
+  "owner_card": "WAITING_USER \u2014 synthetic display TEST SAMPLE ONLY",
+  "display_notice": "SYNTHETIC_TEST_SAMPLE_ONLY \u2014 NOT formal Owner authorization; Owner card still waiting user",
+  "catalog_source": {
+    "kind": "SYNTHETIC_ONLY"
+  }
+}

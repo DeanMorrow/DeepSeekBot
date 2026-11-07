@@ -618,6 +618,10 @@ deepseekbot bot-trace <bot-id> --turns 1
 
 Each turn lists the tools the model called with bounded arguments, the outcome (`ok`, `error`, `denied` when an approval was rejected, `cancelled`, or `pending`), the approval decision when there was one, and the first part of the result. Arguments and results of `secret_cli`, `secret_http`, `protected_cli`, `secret_mcp_connect` and `ask_secret` are never returned. A `denied` call points at the Harness (access or approval); a missing or wrongly argued call points at the model; an `error` from the same tool that also fails in path B points at the Browser or Computer. `--session` reads another of the Bot's Sessions, such as an Assignment.
 
+### Ops catalog
+
+`deepseekbot catalog` calls the live Host method `catalogView` as the authenticated Owner. `deepseekbot catalog-open <entryRef>` calls `catalogOpen`. The Host reads only `$DSH_HOME/botharness/catalog-source.json`. That file points at the official registry. The registry's `display.audiences` decides who may see it. `profile-owner` is this command. `bot:<slug>` uses that Bot's `pack_catalog` and `pack_catalog_open`. `catalog-open` stays the Owner bridge and a Bot cannot call it to become the Owner. `printf '{"entryRef":"ops:asset-catalog#<id>"}' | deepseekbot bot-tool <bot-id> pack_catalog_open --args-stdin` opens item names and briefs for the registered Bot. A missing file is `unreachable`. A registry without `display` is `unauthorized`. Neither result is filled from a Bot memory catalog. `entryRef` is `ops:asset-catalog#<id>`. The reply omits filesystem paths.
+
 ### Harness Bot tools without the model
 
 The Harness tools a Bot uses to talk, read its Inbox and run its Channels and schedules can be called the same way, as that Bot, with no model involved:
@@ -828,6 +832,21 @@ deepseekbot approval-reviewer-model-set bot
 ```
 
 Both commands return `{follows, model}`: `follows` is `bot` (each Bot's own model, `model` is `null`), `model` (the named model is used for every review) or `invalid` (the setting file cannot be read). For a named model they also return `available` and, when it is `false`, `unavailableReason`. A model that is not in the catalog, or whose provider has no working key, is still saved, but every review then posts the ordinary Human card and writes `fallback=model-unavailable` with the reason to `logs.db`; the reviewer never switches to another model on its own. Each review's `approval-review` line in `logs.db` names the `model` and the `reviewSession` it used. When a Bot runs `approval-reviewer-model-set` from its own Shell, the call requires a Human decision or an explicit management-scope saved rule; the model Approval Reviewer cannot answer it. Refusals carry a code: `usage` (no `<provider>/<model>`, or `--effort` with `bot`) and `invalid-input`.
+
+### Concept art
+
+`deepseekbot concept-art` calls the Host bridge method `conceptArt`. It does not accept an API key. `status` reports the manual image lock, whether that lock's credential reference is configured, and that the chat model catalog is not this image route. `open <bot>` resolves that Bot's current Host session and does not create a project. `styles <session>` lists style definitions saved for that session's Bot. `generate-style <session> <ref>` reads one style note from stdin, calls the shared chat lock, and stores the definition for that Bot only. `request` reads one JSON object from stdin. `resume` and `cancel` take a session id and the original operation key. `accept <session> <key> <context-version>` reads the stored task. Bytes that parse inside the Host image limits (`MAX_IMAGE_BYTES`, `MAX_IMAGE_PIXELS` from the existing image inspector) return `accept: true` with reason `BYTES_PARSED_NOT_A_RENDER`. `mediaVerified` and `deliverable` stay false: this is not a verified finished picture. The submitted prompt keeps the user's raw text and any selected style definition; a cleared library definition is not appended, and words in the raw text are not deleted. A reference the route cannot carry is blocked. Refusals include `usage` and `invalid-input`.
+
+```bash
+deepseekbot concept-art status
+deepseekbot concept-art open <bot>
+deepseekbot concept-art styles <session>
+deepseekbot concept-art generate-style <session> <ref>
+deepseekbot concept-art request
+deepseekbot concept-art resume <session> <key>
+deepseekbot concept-art cancel <session> <key>
+deepseekbot concept-art accept <session> <key> <context-version>
+```
 
 ### Idle Compaction
 
