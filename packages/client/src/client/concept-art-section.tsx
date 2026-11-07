@@ -290,25 +290,34 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
         input_fingerprint: idempotencyKey,
         submit_allowed: true,
       },
-    }).then((value) => {
-      const verdict = viewOf(value);
-      setProposed('');
-      setPreview(
-        verdict.userVisible === true && typeof verdict.preview === 'string' ? verdict.preview : '',
-      );
-      setOutcome(
-        [
-          verdict.status ?? '',
-          verdict.fidelity ?? '',
-          verdict.promptSource ?? '',
-          verdict.quality ?? '',
-          verdict.delivery ?? '',
-        ]
-          .filter((item) => item !== '')
-          .join('\n'),
-      );
-      confirming.current = false;
-    });
+    })
+      .then((value) => {
+        const verdict = viewOf(value);
+        setProposed('');
+        setHeld(null);
+        setPreview(
+          verdict.userVisible === true && typeof verdict.preview === 'string'
+            ? verdict.preview
+            : '',
+        );
+        setOutcome(
+          [
+            verdict.status ?? '',
+            verdict.fidelity ?? '',
+            verdict.promptSource ?? '',
+            verdict.quality ?? '',
+            verdict.delivery ?? '',
+          ]
+            .filter((item) => item !== '')
+            .join('\n'),
+        );
+      })
+      .catch((error: unknown) => {
+        setOutcome(error instanceof Error ? error.message : t('conceptArt.notReady'));
+      })
+      .finally(() => {
+        confirming.current = false;
+      });
   };
 
   const cancel = (): void => {

@@ -203,3 +203,83 @@ it('sends the held proposal key and drops a stale requirement before confirming'
   ).toBe(false);
   expect(sent.filter((item) => item.request?.confirmedPrompt !== undefined)).toHaveLength(1);
 });
+
+it('unlocks confirmation after a rejection and does not send it again until the user confirms', async () => {
+  let confirmations = 0;
+  const call: BridgeCall = async (_endpoint, payload) => {
+    const body = payload as { action?: string; request?: { confirmedPrompt?: string } };
+    if (body.action === 'status') {
+      return { ok: true, value: { locked: true, credentialConfigured: true, chatReady: true } };
+    }
+    if (body.action === 'open')
+      return { ok: true, value: { status: 'READY', sessionId: 'session-1' } };
+    if (body.action === 'styles') return { ok: true, value: { styles: [], unassignedCount: 0 } };
+    if (body.request?.confirmedPrompt !== undefined) {
+      confirmations += 1;
+      if (confirmations === 1) {
+        return {
+          ok: false,
+          error: { code: 'unavailable', message: 'confirm failed', details: {} },
+        };
+      }
+      return {
+        ok: true,
+        value: { status: 'ALLOWED', fidelity: 'user-accepted-unverified', userVisible: false },
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        status: 'NEEDS_CONFIRMATION',
+        proposedPrompt: '水彩码头\n增加两个路人',
+        idempotencyKey: 'proposal-hash',
+      },
+    };
+  };
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  roots.push(root);
+  await act(async () => {
+    root.render(createElement(ConceptArtSection, { call, t, botSlug: 'ada' }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const field = host.querySelector('textarea');
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    setter?.call(field, '水彩码头');
+    field?.dispatchEvent(new Event('input', { bubbles: true }));
+    field?.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  const make = [...host.querySelectorAll('button')].find(
+    (button) => button.textContent === 'conceptArt.make',
+  ) as HTMLButtonElement;
+  await act(async () => {
+    make.click();
+    await Promise.resolve();
+  });
+  const confirmButton = () =>
+    [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'conceptArt.confirm',
+    ) as HTMLButtonElement;
+  await act(async () => {
+    confirmButton().click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(confirmations).toBe(1);
+  expect(host.textContent).toContain('confirm failed');
+  expect(confirmButton()).toBeTruthy();
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(confirmations).toBe(1);
+  await act(async () => {
+    confirmButton().click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(confirmations).toBe(2);
+  expect(confirmButton()).toBeUndefined();
+});
