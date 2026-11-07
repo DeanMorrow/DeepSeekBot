@@ -527,9 +527,10 @@ describe('concept art host chain', () => {
       }),
     ).toMatchObject({
       accept: true,
-      deliverable: false,
+      deliverable: true,
       parsed: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
+      delivery: 'mounted-unverified',
       mediaVerified: false,
     });
     const stopped = await callConceptArt(call, {
@@ -629,6 +630,195 @@ describe('concept art host chain', () => {
         reasons: ['HOST_CONTEXT_CONTRACT_MISSING'],
       },
     });
+    await core.runtime.close();
+    core.externalMessaging.close();
+    await fiber.dispose();
+  });
+
+  it('ensures only the named Bot session and mounts parsed bytes without verifying them', async () => {
+    const home = createTempRoot('concept-art-session-');
+    const ctx = new Context();
+    const fiber = ctx.plugin(LocalCredentialProvider, {
+      path: join(home, '.credentials.yaml'),
+      watch: false,
+    });
+    await fiber.await();
+    const core = createCore({
+      dshHome: home,
+      credentials: () => ctx.credentials,
+      sharedRouteFetch: async (input) => {
+        const url = String(input);
+        if (url.includes('/chat/completions')) {
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content:
+                      'RAW_START\n一张码头\nRAW_END\nPROMPT_START\n一张码头\n雨丝\nPROMPT_END',
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ data: [{ b64_json: PNG }] }), { status: 200 });
+      },
+    });
+    trackTestOwner(core.operationalDatabase);
+    expect(core.registry.create({ slug: 'ada', displayName: 'Ada' }).ok).toBe(true);
+    expect(core.registry.create({ slug: 'bea', displayName: 'Bea' }).ok).toBe(true);
+    const methods = createBridgeMethods({ ...core });
+    const opened = async (botSlug: string) => {
+      const result = await methods.conceptArt({ action: 'open', botSlug });
+      expect(result.ok).toBe(true);
+      return result.ok
+        ? (result.value as {
+            status: string;
+            sessionId?: string;
+            projectId?: string;
+            reasons?: string[];
+          })
+        : undefined;
+    };
+    const ada = await opened('ada');
+    const adaAgain = await opened('ada');
+    const bea = await opened('bea');
+    expect(ada?.status).toBe('READY');
+    expect(adaAgain?.sessionId).toBe(ada?.sessionId);
+    expect(ada?.projectId).toBe(`session:${ada?.sessionId}`);
+    expect(bea?.sessionId).not.toBe(ada?.sessionId);
+    expect(core.ownership.resolve(ada?.sessionId ?? '')?.botSlug).toBe('ada');
+    expect(core.ownership.resolve(bea?.sessionId ?? '')?.botSlug).toBe('bea');
+    expect(core.ownership.rootsFor('ada').map((row) => row.sessionId)).toEqual([ada?.sessionId]);
+    expect(core.ownership.rootsFor('bea').map((row) => row.sessionId)).not.toContain(
+      ada?.sessionId,
+    );
+    expect(core.grants.list('ada')).toEqual([]);
+    expect(core.grants.list('bea')).toEqual([]);
+    const unknown = await opened('nobody');
+    expect(unknown).toMatchObject({
+      status: 'INTEGRATION_BLOCKED',
+      reasons: ['HOST_CONTEXT_CONTRACT_MISSING'],
+    });
+    expect(core.ownership.rootsFor('nobody')).toEqual([]);
+    const forged = await core.conceptArt.request({
+      raw_requirement: '一张码头',
+      style: { state: 'none' },
+      sessionId: 'forged-session',
+      botSlug: 'ada',
+      context_version: 1,
+      operation_id: 'forged',
+      route_idempotency_key: 'forged',
+      input_fingerprint: 'forged',
+      submit_allowed: true,
+    });
+    expect(forged).toMatchObject({
+      status: 'INTEGRATION_BLOCKED',
+      reasons: ['HOST_CONTEXT_CONTRACT_MISSING'],
+      submitCalls: 0,
+    });
+    const crossed = await core.conceptArt.request({
+      raw_requirement: '一张码头',
+      style: { state: 'none' },
+      sessionId: ada?.sessionId ?? '',
+      botSlug: 'bea',
+      context_version: 1,
+      operation_id: 'crossed',
+      route_idempotency_key: 'crossed',
+      input_fingerprint: 'crossed',
+      submit_allowed: true,
+    });
+    expect(crossed).toMatchObject({
+      status: 'BLOCKED',
+      reasons: ['BOT_SESSION_MISMATCH'],
+      submitCalls: 0,
+    });
+    expect(core.ownership.resolve(ada?.sessionId ?? '')?.botSlug).toBe('ada');
+
+    await core.sharedRoute.saveInstance(
+      {
+        id: 'apiyi-image',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'image',
+        protocol: 'openai-images',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-image-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-host-test',
+    );
+    await core.sharedRoute.saveInstance(
+      {
+        id: 'apiyi-chat',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'chat',
+        protocol: 'openai-chat',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-chat-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-host-test',
+    );
+    core.sharedRoute.lock('concept-art', 'image', 'apiyi-image', 'fixture-image-model');
+    core.sharedRoute.lock('chat', 'chat', 'apiyi-chat', 'fixture-chat-model');
+    const made = await core.conceptArt.request({
+      raw_requirement: '一张码头',
+      style: { state: 'none' },
+      sessionId: ada?.sessionId ?? '',
+      botSlug: 'ada',
+      context_version: 1,
+      operation_id: 'mount-1',
+      route_idempotency_key: 'mount-1',
+      input_fingerprint: 'mount-1',
+      submit_allowed: true,
+    });
+    expect(made.prompt).toContain('一张码头');
+    expect(made.prompt).toContain('雨丝');
+    expect(made.promptSource).toBe('model-addition-kept');
+    const mounted = await methods.conceptArt({
+      action: 'accept',
+      sessionId: ada?.sessionId,
+      idempotencyKey: 'mount-1',
+      contextVersion: 1,
+    });
+    expect(mounted.ok).toBe(true);
+    expect(mounted.ok ? mounted.value : undefined).toMatchObject({
+      accept: true,
+      deliverable: true,
+      mediaVerified: false,
+      reason: 'BYTES_PARSED_NOT_A_RENDER',
+      delivery: 'mounted-unverified',
+    });
+    const file = (mounted.ok ? mounted.value : undefined) as {
+      file?: { fileId: string; size: number };
+    };
+    const downloaded = await core.attachments.download(file.file?.fileId ?? '', 'concept-art.png');
+    const reader = downloaded.body.getReader();
+    const chunk = await reader.read();
+    expect(Buffer.from(chunk.value ?? new Uint8Array()).toString('base64')).toBe(PNG);
+    const stopped = core.conceptArt.cancel(ada?.sessionId ?? '', 'mount-1');
+    expect(stopped.artifact).toBeNull();
+    const late = await methods.conceptArt({
+      action: 'accept',
+      sessionId: ada?.sessionId,
+      idempotencyKey: 'mount-1',
+      contextVersion: 1,
+    });
+    expect(late.ok ? late.value : undefined).toMatchObject({
+      accept: false,
+      deliverable: false,
+      delivery: 'not-mounted',
+      reason: 'LOCAL_STOP',
+      mediaVerified: false,
+    });
+    expect(JSON.stringify(late)).not.toContain(PNG);
+    const styles = await methods.conceptArt({ action: 'styles', botSlug: 'ada' });
+    expect(styles.ok ? styles.value : undefined).toMatchObject({ unassignedCount: 0 });
+    expect(JSON.stringify(styles)).not.toContain('styleRef');
     await core.runtime.close();
     core.externalMessaging.close();
     await fiber.dispose();

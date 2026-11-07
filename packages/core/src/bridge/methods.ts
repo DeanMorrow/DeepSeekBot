@@ -2299,6 +2299,7 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
       return createConceptArtBridge({
         ...(deps.conceptArt === undefined ? {} : { conceptArt: deps.conceptArt }),
         ...(deps.sharedRoute === undefined ? {} : { sharedRoute: deps.sharedRoute }),
+        ...(deps.attachments === undefined ? {} : { attachments: deps.attachments }),
         sessionForBot: (botSlug) =>
           deps.runtime?.ensureOrchestratorSessionId?.(botSlug) ??
           deps.runtime?.currentOrchestratorSessionId?.(botSlug) ??

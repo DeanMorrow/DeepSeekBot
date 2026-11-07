@@ -28,7 +28,7 @@ type Verdict = {
   mediaVerified?: boolean;
   artifact?: unknown;
   styles?: { styleRef: string; def: string }[];
-  unassigned?: { styleRef: string }[];
+  unassignedCount?: number;
   rawRequirement?: string;
   modelPrompt?: string;
   def?: string;
@@ -121,7 +121,9 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
         if (!live) return;
         const savedView = viewOf(saved);
         if (Array.isArray(savedView.styles)) setStyles(savedView.styles);
-        setUnassigned(Array.isArray(savedView.unassigned) ? savedView.unassigned.length : 0);
+        setUnassigned(
+          typeof savedView.unassignedCount === 'number' ? savedView.unassignedCount : 0,
+        );
       })
       .catch((error: unknown) => {
         if (!live) return;

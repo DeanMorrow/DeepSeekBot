@@ -1,3 +1,4 @@
+import type { AttachmentStore } from '../attachments/store.js';
 import type { ConceptArtRequest, createConceptArtConsumer } from './concept-art-consumer.js';
 import { SharedRouteError, type createSharedModelRoute } from './shared-route.js';
 
@@ -47,6 +48,7 @@ function requestBody(value: unknown): ConceptArtRequest | undefined {
 export function createConceptArtBridge(input: {
   conceptArt?: Consumer;
   sharedRoute?: Route;
+  attachments?: AttachmentStore;
   sessionForBot?: (botSlug: string) => string | null;
 }) {
   return {
@@ -124,7 +126,7 @@ export function createConceptArtBridge(input: {
             ok: true,
             value: {
               styles: input.conceptArt.listStyles(botSlug),
-              unassigned: input.conceptArt.listUnassigned(),
+              unassignedCount: input.conceptArt.listUnassigned().length,
             },
           };
         }
@@ -171,9 +173,43 @@ export function createConceptArtBridge(input: {
           if ('status' in project)
             return { ok: true, value: { ...project, optimization: 'not-performed' } };
           const task = input.sharedRoute.read(project.projectId, body['idempotencyKey']);
+          const verdict = input.conceptArt.accept(task, body['contextVersion'] as string | number);
+          if (
+            !verdict.accept ||
+            task.localStop === true ||
+            task.artifact?.kind !== 'base64' ||
+            task.artifact.value === undefined ||
+            input.attachments === undefined
+          ) {
+            return {
+              ok: true,
+              value: { ...verdict, delivery: 'not-mounted', mediaVerified: false },
+            };
+          }
+          const bytes = Buffer.from(task.artifact.value, 'base64');
+          const ref = await input.attachments.upload({
+            data: (async function* () {
+              yield bytes;
+            })(),
+            name: 'concept-art.png',
+          });
+          const saved = input.attachments.current(ref);
+          if (saved.size !== bytes.length || saved.fileId === undefined) {
+            return {
+              ok: true,
+              value: { ...verdict, delivery: 'not-mounted', mediaVerified: false },
+            };
+          }
           return {
             ok: true,
-            value: input.conceptArt.accept(task, body['contextVersion'] as string | number),
+            value: {
+              ...verdict,
+              deliverable: true,
+              mediaVerified: false,
+              reason: 'BYTES_PARSED_NOT_A_RENDER',
+              delivery: 'mounted-unverified',
+              file: { fileId: saved.fileId, name: saved.name, size: saved.size },
+            },
           };
         }
         return invalid('Concept art action is not status, request, resume, cancel or accept.');

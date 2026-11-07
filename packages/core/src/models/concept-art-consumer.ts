@@ -43,8 +43,9 @@ export interface ConceptArtVerdict {
   status: 'ALLOWED' | 'BLOCKED' | 'INTEGRATION_BLOCKED' | 'NEEDS_CLARIFICATION' | 'NOT_READY';
   reasons: string[];
   submitCalls: number;
-  /** chat-model: the image prompt is the shared-route chat reply after a raw-echo check. */
+  /** chat-model: the shared chat route ran. promptSource says whether its text was kept. */
   optimization: 'chat-model';
+  promptSource?: 'echo-only' | 'model-addition-kept';
   rawRequirement?: string;
   modelPrompt?: string;
   rawEchoMatched?: boolean;
@@ -429,6 +430,10 @@ export function createConceptArtConsumer(input: {
         rawEchoMatched: true,
         fidelity: 'raw-verbatim-submitted' as const,
         optimization: 'chat-model',
+        promptSource:
+          (existing?.prompt ?? prompt) === mechanicalPrompt(request)
+            ? ('echo-only' as const)
+            : ('model-addition-kept' as const),
         projectId: bound.projectId,
         idempotencyKey: request.route_idempotency_key,
         prompt: existing?.prompt ?? prompt,
