@@ -799,10 +799,13 @@ describe('concept art host chain', () => {
       fidelity: 'user-accepted-unverified',
       promptSource: 'user-accepted-model-addition',
     });
+    const imageKey = confirmed.idempotencyKey ?? '';
+    expect(imageKey).not.toBe('mount-1');
+    expect(imageKey).not.toBe(`concept-confirm-${'一张码头\n雨丝'.length}`);
     const mounted = await methods.conceptArt({
       action: 'accept',
       sessionId: ada?.sessionId,
-      idempotencyKey: 'mount-1',
+      idempotencyKey: imageKey,
       contextVersion: 1,
     });
     expect(mounted.ok).toBe(true);
@@ -823,12 +826,12 @@ describe('concept art host chain', () => {
     const reader = downloaded.body.getReader();
     const chunk = await reader.read();
     expect(Buffer.from(chunk.value ?? new Uint8Array()).toString('base64')).toBe(PNG);
-    const stopped = core.conceptArt.cancel(ada?.sessionId ?? '', 'mount-1');
+    const stopped = core.conceptArt.cancel(ada?.sessionId ?? '', imageKey);
     expect(stopped.artifact).toBeNull();
     const late = await methods.conceptArt({
       action: 'accept',
       sessionId: ada?.sessionId,
-      idempotencyKey: 'mount-1',
+      idempotencyKey: imageKey,
       contextVersion: 1,
     });
     expect(late.ok ? late.value : undefined).toMatchObject({

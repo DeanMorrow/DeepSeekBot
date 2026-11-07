@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 
@@ -103,9 +103,22 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   const [unassigned, setUnassigned] = useState(0);
   const [proposed, setProposed] = useState('');
   const [preview, setPreview] = useState('');
+  const confirming = useRef(false);
+  const [held, setHeld] = useState<{
+    id: string;
+    text: string;
+    raw: string;
+    styleState: 'none' | 'selected' | 'disabled';
+    picked: string;
+    sessionId: string;
+    botSlug: string;
+  } | null>(null);
 
   useEffect(() => {
     let live = true;
+    setHeld(null);
+    setProposed('');
+    setPreview('');
     void callConceptArt(call, { action: 'status' })
       .then(async (value) => {
         if (!live) return;
@@ -197,7 +210,27 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
     }).then((value) => {
       const verdict = viewOf(value);
       setOperationKey(typeof verdict.idempotencyKey === 'string' ? verdict.idempotencyKey : null);
-      setProposed(typeof verdict.proposedPrompt === 'string' ? verdict.proposedPrompt : '');
+      if (
+        verdict.status === 'NEEDS_CONFIRMATION' &&
+        typeof verdict.proposedPrompt === 'string' &&
+        typeof verdict.idempotencyKey === 'string' &&
+        sessionId !== null &&
+        botSlug !== undefined
+      ) {
+        setHeld({
+          id: verdict.idempotencyKey,
+          text: verdict.proposedPrompt,
+          raw,
+          styleState,
+          picked,
+          sessionId,
+          botSlug,
+        });
+        setProposed(verdict.proposedPrompt);
+      } else {
+        setHeld(null);
+        setProposed('');
+      }
       setPreview(
         verdict.userVisible === true && typeof verdict.preview === 'string' ? verdict.preview : '',
       );
@@ -219,16 +252,38 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   };
 
   const confirm = (): void => {
-    if (sessionId === null || proposed === '') return;
-    const idempotencyKey = `concept-confirm-${proposed.length}`;
+    if (confirming.current || held === null || sessionId === null || botSlug === undefined) return;
+    confirming.current = true;
+    if (
+      raw !== held.raw ||
+      styleState !== held.styleState ||
+      picked !== held.picked ||
+      sessionId !== held.sessionId ||
+      botSlug !== held.botSlug
+    ) {
+      setHeld(null);
+      setProposed('');
+      setPreview('');
+      setOutcome('STALE_CONFIRMATION');
+      confirming.current = false;
+      return;
+    }
+    const idempotencyKey = held.id;
     void callConceptArt(call, {
       action: 'request',
       request: {
-        raw_requirement: raw,
-        style: { state: styleState },
-        sessionId,
-        ...(botSlug === undefined ? {} : { botSlug }),
-        confirmedPrompt: proposed,
+        raw_requirement: held.raw,
+        style:
+          held.styleState === 'selected' && held.picked !== ''
+            ? {
+                state: held.styleState,
+                styleRef: held.picked,
+                def: styles.find((item) => item.styleRef === held.picked)?.def,
+              }
+            : { state: held.styleState },
+        sessionId: held.sessionId,
+        botSlug: held.botSlug,
+        confirmedPrompt: held.text,
         context_version: 1,
         operation_id: idempotencyKey,
         route_idempotency_key: idempotencyKey,
@@ -252,6 +307,7 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
           .filter((item) => item !== '')
           .join('\n'),
       );
+      confirming.current = false;
     });
   };
 
@@ -287,6 +343,8 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
               value={styleValue}
               onChange={(event) => {
                 const value = event.target.value;
+                setHeld(null);
+                setProposed('');
                 if (value === 'none' || value === 'disabled') {
                   setStyleState(value);
                   return;
@@ -323,7 +381,14 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
             <textarea
               aria-label={t('conceptArt.raw')}
               value={raw}
-              onChange={(event) => setRaw(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                setRaw(value);
+                if (held !== null && held.raw !== value) {
+                  setHeld(null);
+                  setProposed('');
+                }
+              }}
             />
           </SettingsRow>
           {proposed === '' ? null : (

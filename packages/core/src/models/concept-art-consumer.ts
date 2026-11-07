@@ -132,6 +132,41 @@ export function transparencyMaterial(raw: string): 'conflict' | 'separate' | 'un
   return 'unclear';
 }
 
+/** Content address of one held proposal. Same inputs stay idempotent; length is not an identity. */
+export function conceptArtProposalId(input: {
+  projectId: string;
+  botSlug: string;
+  raw: string;
+  style: ConceptArtRequest['style'];
+  history: ConceptArtRequest['style_history_audit_only'];
+  references: ConceptArtRequest['references'];
+  contextVersion: string;
+  proposedPrompt: string;
+}): string {
+  const snapshot = {
+    projectId: input.projectId,
+    botSlug: input.botSlug,
+    raw: input.raw,
+    style: {
+      state: input.style.state,
+      styleRef: input.style.styleRef ?? null,
+      version: input.style.version ?? null,
+      def: input.style.def ?? null,
+      defFixture: input.style.def_fixture ?? null,
+    },
+    history: [...(input.history ?? [])].map((item) => ({
+      styleRef: item.styleRef ?? null,
+      def: item.def ?? null,
+    })),
+    references: [...(input.references ?? [])]
+      .map((item) => ({ id: item.id, status: item.status }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    contextVersion: input.contextVersion,
+    proposedPrompt: input.proposedPrompt,
+  };
+  return createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+}
+
 function canonicalFingerprint(request: ConceptArtRequest): string {
   const snapshot = {
     raw_requirement: request.raw_requirement,
@@ -269,6 +304,55 @@ export function createConceptArtConsumer(input: {
         | { operation_id: string; context_version: string; fingerprint: string; prompt: string }
         | undefined;
     });
+
+  const proposalIdFor = (request: ConceptArtRequest, projectId: string, proposed: string) =>
+    conceptArtProposalId({
+      projectId,
+      botSlug: input.ownership.resolve(request.sessionId ?? '')?.botSlug ?? '',
+      raw: request.raw_requirement.trim(),
+      style: request.style,
+      history: request.style_history_audit_only,
+      references: request.references,
+      contextVersion: String(request.context_version),
+      proposedPrompt: proposed,
+    });
+
+  const rememberProposal = (
+    projectId: string,
+    proposalId: string,
+    contextVersion: string,
+    proposed: string,
+  ) => {
+    input.database.transaction(
+      (db) =>
+        db
+          .prepare(
+            `INSERT INTO concept_art_operations
+             (session_id, idempotency_key, operation_id, context_version, fingerprint, prompt)
+             VALUES (?, ?, ?, ?, 'pending', ?)
+             ON CONFLICT(session_id, idempotency_key) DO UPDATE SET
+               operation_id = excluded.operation_id,
+               context_version = excluded.context_version,
+               fingerprint = 'pending',
+               prompt = excluded.prompt`,
+          )
+          .run(projectId, proposalId, proposalId, contextVersion, proposed),
+      ['concept-art'],
+    );
+  };
+
+  const markProposal = (projectId: string, proposalId: string, fingerprint: string) => {
+    input.database.transaction(
+      (db) =>
+        db
+          .prepare(
+            `UPDATE concept_art_operations SET fingerprint = ?
+             WHERE session_id = ? AND idempotency_key = ?`,
+          )
+          .run(fingerprint, projectId, proposalId),
+      ['concept-art'],
+    );
+  };
 
   const refused = (
     status: ConceptArtVerdict['status'],
@@ -422,6 +506,78 @@ export function createConceptArtConsumer(input: {
       if (request.botSlug !== undefined && request.botSlug !== '' && owner !== request.botSlug) {
         return refused('BLOCKED', ['BOT_SESSION_MISMATCH'], 0);
       }
+      const raw = request.raw_requirement.trim();
+      if (request.confirmedPrompt !== undefined) {
+        const proposed = request.confirmedPrompt;
+        const proposalId = proposalIdFor(request, bound.projectId, proposed);
+        const row = readOp(bound.projectId, proposalId);
+        if (row === undefined || row.prompt !== proposed) {
+          return refused('BLOCKED', ['STALE_CONFIRMATION'], 0);
+        }
+        if (row.fingerprint === 'cancelled') return refused('BLOCKED', ['LOCAL_STOP'], 0);
+        const existingTask = await wrapped.resume(bound.projectId, proposalId).catch((error) => {
+          if (error instanceof SharedRouteError && error.reason === 'wrong-project')
+            return undefined;
+          throw error;
+        });
+        if (existingTask?.localStop === true) {
+          markProposal(bound.projectId, proposalId, 'cancelled');
+          return refused('BLOCKED', ['LOCAL_STOP'], 0);
+        }
+        if (existingTask !== undefined) {
+          return {
+            status: 'ALLOWED',
+            reasons: [],
+            submitCalls: 0,
+            rawRequirement: raw,
+            modelPrompt: row.prompt,
+            rawEchoMatched: row.prompt.includes(raw),
+            fidelity: 'user-accepted-unverified',
+            optimization: 'chat-model',
+            promptSource: 'user-accepted-model-addition',
+            projectId: bound.projectId,
+            idempotencyKey: proposalId,
+            prompt: row.prompt,
+            task: existingTask,
+          };
+        }
+        let task: RouteTask;
+        try {
+          task = await wrapped.submit(
+            'concept-art',
+            'image',
+            bound.projectId,
+            proposalId,
+            row.prompt,
+          );
+        } catch (error) {
+          if (
+            error instanceof SharedRouteError &&
+            (error.reason === 'unconfigured' ||
+              error.reason === 'credential-missing' ||
+              error.reason === 'model-not-allowed')
+          ) {
+            return refused('NOT_READY', ['MODEL_NOT_READY'], 0);
+          }
+          throw error;
+        }
+        markProposal(bound.projectId, proposalId, 'submitted');
+        return {
+          status: 'ALLOWED',
+          reasons: [],
+          submitCalls: submitCalls - before,
+          rawRequirement: raw,
+          modelPrompt: row.prompt,
+          rawEchoMatched: row.prompt.includes(raw),
+          fidelity: 'user-accepted-unverified',
+          optimization: 'chat-model',
+          promptSource: 'user-accepted-model-addition',
+          projectId: bound.projectId,
+          idempotencyKey: proposalId,
+          prompt: row.prompt,
+          task,
+        };
+      }
       const fingerprint = canonicalFingerprint(request);
       const existing = readOp(bound.projectId, request.route_idempotency_key);
       if (existing !== undefined && existing.context_version !== String(request.context_version)) {
@@ -433,49 +589,20 @@ export function createConceptArtConsumer(input: {
       ) {
         return refused('BLOCKED', ['IDEMPOTENCY_KEY_PAYLOAD_MISMATCH'], 0);
       }
-      const raw = request.raw_requirement.trim();
       let prompt = existing?.prompt;
       let promptSource: ConceptArtVerdict['promptSource'] = 'echo-only';
       let fidelity: ConceptArtVerdict['fidelity'] = 'raw-plus-selected-only';
-      if (prompt === undefined && request.confirmedPrompt !== undefined) {
-        if (!request.confirmedPrompt.includes(raw)) {
-          return {
-            status: 'NEEDS_CLARIFICATION',
-            reasons: ['FIDELITY_CONTRADICTION'],
-            submitCalls: 0,
-            optimization: 'chat-model',
-            fidelity: 'unverified-model-addition',
-            promptSource: 'model-addition-held',
-            rawRequirement: raw,
-          };
-        }
-        const confirmed = request.confirmedPrompt;
-        prompt = confirmed;
-        promptSource = 'user-accepted-model-addition';
-        fidelity = 'user-accepted-unverified';
-        input.database.transaction(
-          (db) =>
-            db
-              .prepare(
-                `INSERT INTO concept_art_operations
-                 (session_id, idempotency_key, operation_id, context_version, fingerprint, prompt)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-              )
-              .run(
-                bound.projectId,
-                request.route_idempotency_key,
-                request.operation_id,
-                String(request.context_version),
-                fingerprint,
-                confirmed,
-              ),
-          ['concept-art'],
-        );
-      }
       if (prompt === undefined) {
         const model = await optimizeWithChat(request, bound.projectId);
         if (model.status === 'NEEDS_CONFIRMATION' && 'proposedPrompt' in model) {
           const proposedPrompt = model.proposedPrompt;
+          const proposalId = proposalIdFor(request, bound.projectId, proposedPrompt);
+          rememberProposal(
+            bound.projectId,
+            proposalId,
+            String(request.context_version),
+            proposedPrompt,
+          );
           return {
             status: 'NEEDS_CONFIRMATION',
             reasons: model.reasons,
@@ -485,6 +612,7 @@ export function createConceptArtConsumer(input: {
             fidelity: 'unverified-model-addition',
             proposedPrompt,
             rawRequirement: raw,
+            idempotencyKey: proposalId,
           };
         }
         if (model.status !== 'ok') return refused(model.status, model.reasons, 0);
@@ -660,13 +788,43 @@ export function createConceptArtConsumer(input: {
     cancel(sessionId: string, idempotencyKey: string) {
       const bound = sessionProjectId(input.ownership, sessionId);
       if ('status' in bound) throw Object.assign(new Error(bound.status), bound);
-      const task = wrapped.cancel(bound.projectId, idempotencyKey);
-      return {
-        ...task,
-        artifact: null,
-        deliverable: false as const,
-        mediaVerified: false as const,
-      };
+      const row = readOp(bound.projectId, idempotencyKey);
+      if (
+        row !== undefined &&
+        (row.fingerprint === 'pending' ||
+          row.fingerprint === 'submitted' ||
+          row.fingerprint === 'cancelled')
+      ) {
+        markProposal(bound.projectId, idempotencyKey, 'cancelled');
+      }
+      try {
+        const task = wrapped.cancel(bound.projectId, idempotencyKey);
+        return {
+          ...task,
+          artifact: null,
+          deliverable: false as const,
+          mediaVerified: false as const,
+        };
+      } catch (error) {
+        if (
+          row !== undefined &&
+          error instanceof SharedRouteError &&
+          error.reason === 'wrong-project'
+        ) {
+          return {
+            status: 'cancelled',
+            localStop: true,
+            remoteTaskId: null,
+            error: null,
+            artifact: null,
+            projectId: bound.projectId,
+            idempotencyKey,
+            deliverable: false as const,
+            mediaVerified: false as const,
+          };
+        }
+        throw error;
+      }
     },
     accept(task: RouteTask, contextVersion: string | number) {
       const limits = input.limits;

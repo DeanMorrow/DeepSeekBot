@@ -989,4 +989,210 @@ describe('concept art consumer', () => {
     });
     expect(mismatch).toMatchObject({ status: 'BLOCKED', reasons: ['BOT_SESSION_MISMATCH'] });
   });
+
+  it('binds a confirmation to that proposal, session and Bot', async () => {
+    const env = harness();
+    await env.route.saveInstance(
+      {
+        id: 'apiyi-image',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'image',
+        protocol: 'openai-images',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-image-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-test-secret',
+    );
+    await env.route.saveInstance(
+      {
+        id: 'apiyi-chat',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'chat',
+        protocol: 'openai-chat',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-chat-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-test-secret',
+    );
+    env.route.lock('concept-art', 'image', 'apiyi-image', 'fixture-image-model');
+    env.route.lock('chat', 'chat', 'apiyi-chat', 'fixture-chat-model');
+    const consumer = createConceptArtConsumer({
+      database: env.database,
+      ownership: env.ownership,
+      route: env.route,
+      limits: TEST_LIMITS,
+    });
+    const script = (raw: string, extra: string) => ({
+      choices: [
+        {
+          message: {
+            content: `RAW_START\n${raw}\nRAW_END\nPROMPT_START\n${raw}\n${extra}\nPROMPT_END`,
+          },
+        },
+      ],
+    });
+    const ask = (raw: string, extra: string, key: string) => {
+      env.chatScripts.push(script(raw, extra));
+      return consumer.request({
+        raw_requirement: raw,
+        style: { state: 'none' },
+        sessionId: 'fixture-ctx-1',
+        botSlug: 'ada',
+        context_version: 1,
+        operation_id: key,
+        route_idempotency_key: key,
+        input_fingerprint: key,
+        submit_allowed: true,
+      });
+    };
+    const people = await ask('水彩码头', '增加两个路人', 'ask-people');
+    const desert = await ask('水彩码头', '不要沙漠航拍', 'ask-desert');
+    expect(people.proposedPrompt).toBe('水彩码头\n增加两个路人');
+    expect(desert.proposedPrompt).toBe('水彩码头\n不要沙漠航拍');
+    expect(people.proposedPrompt?.length).toBe(desert.proposedPrompt?.length);
+    expect(people.idempotencyKey).toBeTruthy();
+    expect(people.idempotencyKey).not.toBe(desert.idempotencyKey);
+    expect(people.idempotencyKey).not.toBe(`concept-confirm-${people.proposedPrompt?.length}`);
+    const before = env.posts();
+    const confirm = (patch: Record<string, unknown>) =>
+      consumer.request({
+        raw_requirement: '水彩码头',
+        style: { state: 'none' },
+        sessionId: 'fixture-ctx-1',
+        botSlug: 'ada',
+        context_version: 1,
+        operation_id: `concept-confirm-${people.proposedPrompt?.length}`,
+        route_idempotency_key: `concept-confirm-${people.proposedPrompt?.length}`,
+        input_fingerprint: `concept-confirm-${people.proposedPrompt?.length}`,
+        submit_allowed: true,
+        ...patch,
+      });
+    const first = await confirm({ confirmedPrompt: people.proposedPrompt });
+    const replay = await confirm({ confirmedPrompt: people.proposedPrompt });
+    expect(first).toMatchObject({
+      status: 'ALLOWED',
+      fidelity: 'user-accepted-unverified',
+      promptSource: 'user-accepted-model-addition',
+      idempotencyKey: people.idempotencyKey,
+      prompt: people.proposedPrompt,
+    });
+    expect(replay.idempotencyKey).toBe(people.idempotencyKey);
+    expect(replay.prompt).toBe(people.proposedPrompt);
+    expect(env.posts()).toBe(before + 1);
+    const second = await confirm({ confirmedPrompt: desert.proposedPrompt });
+    expect(second).toMatchObject({
+      status: 'ALLOWED',
+      prompt: desert.proposedPrompt,
+      idempotencyKey: desert.idempotencyKey,
+      fidelity: 'user-accepted-unverified',
+    });
+    expect(second.prompt).not.toBe(people.proposedPrompt);
+    expect(env.posts()).toBe(before + 2);
+    const staleRaw = await confirm({
+      raw_requirement: '水彩',
+      confirmedPrompt: people.proposedPrompt,
+    });
+    expect(staleRaw).toMatchObject({ status: 'BLOCKED', reasons: ['STALE_CONFIRMATION'] });
+    expect(JSON.stringify(staleRaw)).not.toContain(PNG);
+    const staleStyle = await confirm({
+      style: { state: 'disabled', def: '厚涂' },
+      confirmedPrompt: people.proposedPrompt,
+    });
+    expect(staleStyle).toMatchObject({ status: 'BLOCKED', reasons: ['STALE_CONFIRMATION'] });
+    const otherSession = await confirm({
+      sessionId: 'fixture-ctx-2',
+      confirmedPrompt: people.proposedPrompt,
+    });
+    expect(otherSession).toMatchObject({ status: 'BLOCKED', reasons: ['STALE_CONFIRMATION'] });
+    env.ownership.claim({
+      sessionId: 'bea-session',
+      botSlug: 'bea',
+      rootRole: 'orchestrator',
+      at: '2026-01-01T00:00:00.000Z',
+    });
+    const otherBot = await confirm({
+      sessionId: 'bea-session',
+      botSlug: 'bea',
+      confirmedPrompt: people.proposedPrompt,
+    });
+    expect(otherBot).toMatchObject({ status: 'BLOCKED', reasons: ['STALE_CONFIRMATION'] });
+    const borrowed = await confirm({
+      sessionId: 'fixture-ctx-1',
+      botSlug: 'bea',
+      confirmedPrompt: people.proposedPrompt,
+    });
+    expect(borrowed).toMatchObject({ status: 'BLOCKED', reasons: ['BOT_SESSION_MISMATCH'] });
+    const referenced = await confirm({
+      confirmedPrompt: people.proposedPrompt,
+      references: [{ id: 'plate', status: 'present_local' }],
+    });
+    expect(referenced.reasons).toContain('REFERENCE_REQUIRED_BUT_ROUTE_PROMPT_ONLY');
+    expect(referenced.status).not.toBe('ALLOWED');
+    const held = await confirm({
+      confirmedPrompt: people.proposedPrompt,
+      submit_allowed: false,
+    });
+    expect(held.status).toBe('BLOCKED');
+    expect(env.posts()).toBe(before + 2);
+    const stopped = consumer.cancel('fixture-ctx-1', desert.idempotencyKey ?? '');
+    expect(stopped.artifact).toBeNull();
+    const afterCancel = await confirm({ confirmedPrompt: desert.proposedPrompt });
+    expect(afterCancel).toMatchObject({ status: 'BLOCKED', reasons: ['LOCAL_STOP'] });
+    expect(JSON.stringify(afterCancel)).not.toContain(PNG);
+    expect(env.posts()).toBe(before + 2);
+
+    const chatOnly = harness();
+    await chatOnly.route.saveInstance(
+      {
+        id: 'apiyi-chat',
+        gateway: 'apiyi',
+        vendor: 'openai',
+        capability: 'chat',
+        protocol: 'openai-chat',
+        baseUrl: 'https://api.apiyi.com/v1',
+        models: ['fixture-chat-model'],
+        credentialRef: 'apiyi-account',
+      },
+      'sk-test-secret',
+    );
+    chatOnly.route.lock('chat', 'chat', 'apiyi-chat', 'fixture-chat-model');
+    const unread = createConceptArtConsumer({
+      database: chatOnly.database,
+      ownership: chatOnly.ownership,
+      route: chatOnly.route,
+      limits: TEST_LIMITS,
+    });
+    chatOnly.chatScripts.push(script('水彩码头', '增加两个路人'));
+    const pending = await unread.request({
+      raw_requirement: '水彩码头',
+      style: { state: 'none' },
+      sessionId: 'fixture-ctx-1',
+      botSlug: 'ada',
+      context_version: 1,
+      operation_id: 'chat-only',
+      route_idempotency_key: 'chat-only',
+      input_fingerprint: 'chat-only',
+      submit_allowed: true,
+    });
+    expect(pending.status).toBe('NEEDS_CONFIRMATION');
+    const proposed = pending.proposedPrompt ?? '';
+    const refused = await unread.request({
+      raw_requirement: '水彩码头',
+      style: { state: 'none' },
+      sessionId: 'fixture-ctx-1',
+      botSlug: 'ada',
+      confirmedPrompt: proposed,
+      context_version: 1,
+      operation_id: 'chat-only',
+      route_idempotency_key: 'chat-only',
+      input_fingerprint: 'chat-only',
+      submit_allowed: true,
+    });
+    expect(refused).toMatchObject({ status: 'NOT_READY', reasons: ['MODEL_NOT_READY'] });
+    expect(chatOnly.posts()).toBe(0);
+  });
 });

@@ -105,3 +105,101 @@ it('shows the read-back image and a save link without calling it verified', asyn
   });
   expect(host.querySelector('img')).toBeNull();
 });
+
+it('sends the held proposal key and drops a stale requirement before confirming', async () => {
+  const sent: {
+    action?: string;
+    request?: { route_idempotency_key?: string; confirmedPrompt?: string };
+  }[] = [];
+  const proposal = '水彩码头\n不要沙漠航拍';
+  const call: BridgeCall = async (_endpoint, payload) => {
+    const body = payload as {
+      action?: string;
+      request?: { route_idempotency_key?: string; confirmedPrompt?: string };
+    };
+    sent.push(body);
+    if (body.action === 'status') {
+      return { ok: true, value: { locked: true, credentialConfigured: true, chatReady: true } };
+    }
+    if (body.action === 'open')
+      return { ok: true, value: { status: 'READY', sessionId: 'session-1' } };
+    if (body.action === 'styles') return { ok: true, value: { styles: [], unassignedCount: 0 } };
+    if (body.request?.confirmedPrompt !== undefined) {
+      return {
+        ok: true,
+        value: {
+          status: 'ALLOWED',
+          fidelity: 'user-accepted-unverified',
+          promptSource: 'user-accepted-model-addition',
+          userVisible: false,
+        },
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        status: 'NEEDS_CONFIRMATION',
+        proposedPrompt: proposal,
+        idempotencyKey: 'proposal-hash',
+        fidelity: 'unverified-model-addition',
+        promptSource: 'model-addition-held',
+      },
+    };
+  };
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  roots.push(root);
+  await act(async () => {
+    root.render(createElement(ConceptArtSection, { call, t, botSlug: 'ada' }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const field = host.querySelector('textarea');
+  const setValue = (value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    setter?.call(field, value);
+    field?.dispatchEvent(new Event('input', { bubbles: true }));
+    field?.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  await act(async () => {
+    setValue('水彩码头');
+  });
+  const make = [...host.querySelectorAll('button')].find(
+    (button) => button.textContent === 'conceptArt.make',
+  ) as HTMLButtonElement;
+  await act(async () => {
+    make.click();
+    await Promise.resolve();
+  });
+  const confirm = [...host.querySelectorAll('button')].find(
+    (button) => button.textContent === 'conceptArt.confirm',
+  ) as HTMLButtonElement;
+  expect(confirm).toBeTruthy();
+  await act(async () => {
+    confirm.click();
+    await Promise.resolve();
+  });
+  const confirmed = sent.find((item) => item.request?.confirmedPrompt !== undefined);
+  expect(confirmed?.request?.route_idempotency_key).toBe('proposal-hash');
+  expect(confirmed?.request?.route_idempotency_key).not.toBe(`concept-confirm-${proposal.length}`);
+  await act(async () => {
+    setValue('水彩码头');
+    make.click();
+    await Promise.resolve();
+  });
+  expect(
+    [...host.querySelectorAll('button')].some(
+      (button) => button.textContent === 'conceptArt.confirm',
+    ),
+  ).toBe(true);
+  await act(async () => {
+    setValue('水彩');
+  });
+  expect(
+    [...host.querySelectorAll('button')].some(
+      (button) => button.textContent === 'conceptArt.confirm',
+    ),
+  ).toBe(false);
+  expect(sent.filter((item) => item.request?.confirmedPrompt !== undefined)).toHaveLength(1);
+});
