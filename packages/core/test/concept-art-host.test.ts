@@ -126,7 +126,7 @@ describe('concept art host chain', () => {
         const raw = content.split('RAW_START\n')[1]?.split('\nRAW_END')[0] ?? '';
         const selected =
           content.split('SELECTED_STYLE:\n')[1]?.split('\nCLEARED_STYLES:')[0]?.trim() ?? '';
-        const prompt = `synthetic-chat-optimized${selected === '' ? '' : ` ${selected}`}`;
+        const prompt = selected === '' || raw.includes(selected) ? raw : `${raw}\n${selected}`;
         return new Response(
           JSON.stringify({
             choices: [
@@ -205,7 +205,7 @@ describe('concept art host chain', () => {
     expect(opened.task?.artifact).toMatchObject({ kind: 'base64', mediaVerified: false });
     expect(core.conceptArt.accept(opened.task!, 1)).toMatchObject({
       accept: true,
-      deliverable: false,
+      deliverable: true,
       parsed: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
       mediaVerified: false,
@@ -223,7 +223,7 @@ describe('concept art host chain', () => {
       input_fingerprint: 'fp-t3-poison',
     } as never);
     expect(poisoned.status).toBe('ALLOWED');
-    expect(poisoned.prompt).toContain('synthetic-chat-optimized');
+    expect(poisoned.prompt).toContain('水彩');
     expect(poisoned.prompt).not.toContain('平涂');
     expect(posts).toBe(2);
     const clean = await core.conceptArt.request({
@@ -368,7 +368,7 @@ describe('concept art host chain', () => {
         const raw = content.split('RAW_START\n')[1]?.split('\nRAW_END')[0] ?? '';
         const selected =
           content.split('SELECTED_STYLE:\n')[1]?.split('\nCLEARED_STYLES:')[0]?.trim() ?? '';
-        const prompt = `synthetic-chat-optimized${selected === '' ? '' : ` ${selected}`}`;
+        const prompt = selected === '' || raw.includes(selected) ? raw : `${raw}\n${selected}`;
         return new Response(
           JSON.stringify({
             choices: [
@@ -485,9 +485,7 @@ describe('concept art host chain', () => {
       }) as Promise<Record<string, unknown>>;
     };
     expect(await ask('F_STYLE_SELECTED')).toMatchObject({ status: 'ALLOWED' });
-    expect(String((await ask('F_STYLE_NONE_RAW_WATERCOLOR')).prompt)).toContain(
-      'synthetic-chat-optimized',
-    );
+    expect(String((await ask('F_STYLE_NONE_RAW_WATERCOLOR')).prompt)).toContain('水彩');
     expect(await ask('F_STYLE_DISABLED_SUCCESS')).toMatchObject({ status: 'ALLOWED' });
     const opened = await ask('F_STYLE_NONE');
     const fresh = await ask('F_EXPLICIT_NEW_GENERATION');
@@ -529,7 +527,7 @@ describe('concept art host chain', () => {
       }),
     ).toMatchObject({
       accept: true,
-      deliverable: false,
+      deliverable: true,
       parsed: true,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
       mediaVerified: false,
@@ -592,7 +590,7 @@ describe('concept art host chain', () => {
     expect(separated).toMatchObject({ status: 'ALLOWED' });
     const generated = await runConceptArtCommand(
       'concept-art',
-      ['generate-style', 'harbor-flat'],
+      ['generate-style', 'fixture-ctx-1', 'harbor-flat'],
       async () => async (_method, payload) => {
         const result = await methods.conceptArt(payload);
         if (!result.ok) throw new Error(result.error.code);
@@ -608,7 +606,7 @@ describe('concept art host chain', () => {
     });
     const listed = await runConceptArtCommand(
       'concept-art',
-      ['styles'],
+      ['styles', 'fixture-ctx-1'],
       async () => async (_method, payload) => {
         const result = await methods.conceptArt(payload);
         if (!result.ok) throw new Error(result.error.code);

@@ -2940,6 +2940,26 @@ const CONCEPT_ART_STYLE_MIGRATION: SchemaMigration = {
   },
 };
 
+const CONCEPT_ART_STYLE_SCOPE_MIGRATION: SchemaMigration = {
+  generation: 136,
+  module: 'concept-art',
+  description: 'Scope concept-art styles to the owning Bot',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE concept_art_styles_scoped (
+        bot_slug TEXT NOT NULL,
+        style_ref TEXT NOT NULL,
+        version TEXT NOT NULL,
+        def TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (bot_slug, style_ref, version)
+      );
+      DROP TABLE concept_art_styles;
+      ALTER TABLE concept_art_styles_scoped RENAME TO concept_art_styles;
+    `);
+  },
+};
+
 const SHARED_MODEL_MIGRATION: SchemaMigration = {
   generation: 133,
   module: 'shared-model',
@@ -3312,4 +3332,5 @@ export const BOT_HARNESS_SCHEMA_PLAN = defineSchemaPlan([
   SHARED_MODEL_MIGRATION,
   CONCEPT_ART_OPERATION_MIGRATION,
   CONCEPT_ART_STYLE_MIGRATION,
+  CONCEPT_ART_STYLE_SCOPE_MIGRATION,
 ]);

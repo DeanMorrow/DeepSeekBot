@@ -26,15 +26,18 @@ export async function runConceptArtCommand(
 ): Promise<unknown> {
   const action = rest[0];
   if (action === 'status' && rest.length === 1) return (await connect())('conceptArt', { action });
-  if (action === 'styles' && rest.length === 1) return (await connect())('conceptArt', { action });
-  if (action === 'generate-style' && rest.length === 2) {
+  if (action === 'open' && rest.length === 2)
+    return (await connect())('conceptArt', { action, botSlug: rest[1] });
+  if (action === 'styles' && rest.length === 2)
+    return (await connect())('conceptArt', { action, sessionId: rest[1] });
+  if (action === 'generate-style' && rest.length === 3) {
     const note = (await readStdin()).trim();
     if (note === '') usage('concept-art generate-style reads the style note from stdin.');
     return (await connect())('conceptArt', {
       action: 'generateStyle',
-      styleRef: rest[1],
+      sessionId: rest[1],
+      styleRef: rest[2],
       note,
-      sessionId: null,
     });
   }
   if (action === 'request' && rest.length === 1) {
@@ -63,6 +66,6 @@ export async function runConceptArtCommand(
     });
   }
   usage(
-    'concept-art needs status, styles, generate-style <ref>, request, resume <session> <key>, cancel <session> <key>, or accept <session> <key> <context-version>.',
+    'concept-art needs status, open <bot>, styles <session>, generate-style <session> <ref>, request, resume <session> <key>, cancel <session> <key>, or accept <session> <key> <context-version>.',
   );
 }

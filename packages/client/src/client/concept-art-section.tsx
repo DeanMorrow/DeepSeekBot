@@ -2,11 +2,12 @@ import { useEffect, useState, type ReactElement } from 'react';
 
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 
+import type { BridgeActions } from './actions.js';
 import type { BridgeCall } from './bridge.js';
 import { callConceptArt } from './concept-art-bridge.js';
 import { SettingsRow, SettingsRows, SettingsSection } from './ds/settings-row.js';
 
-type Props = PropsLocale<'botharness'> & InjectFace<{ call: BridgeCall }>;
+type Props = PropsLocale<'botharness'> & InjectFace<{ call: BridgeCall }> & { botSlug?: string };
 
 type StatusView = {
   locked?: boolean;
@@ -28,13 +29,38 @@ type Verdict = {
   rawRequirement?: string;
   modelPrompt?: string;
   def?: string;
+  sessionId?: string;
+  botSlug?: string;
 };
+
+export function conceptArtCall(conceptArt: BridgeActions['conceptArt']): BridgeCall {
+  return async (_endpoint, payload) => {
+    if (conceptArt === undefined) {
+      return {
+        ok: false,
+        error: { code: 'unavailable', message: 'Concept art is not on this Host.', details: {} },
+      };
+    }
+    try {
+      return { ok: true, value: await conceptArt(payload) };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: 'unavailable',
+          message: error instanceof Error ? error.message : 'Concept art is not available.',
+          details: {},
+        },
+      };
+    }
+  };
+}
 
 function viewOf(value: unknown): Verdict & StatusView {
   return typeof value === 'object' && value !== null ? (value as Verdict & StatusView) : {};
 }
 
-export function ConceptArtSection({ call, t }: Props): ReactElement {
+export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   const [ready, setReady] = useState(false);
   const [note, setNote] = useState(t('conceptArt.notReady'));
   const [flags, setFlags] = useState('locked:false credential:false chat:false');
@@ -45,6 +71,7 @@ export function ConceptArtSection({ call, t }: Props): ReactElement {
   const [styles, setStyles] = useState<{ styleRef: string; def: string }[]>([]);
   const [picked, setPicked] = useState('');
   const [operationKey, setOperationKey] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -56,10 +83,19 @@ export function ConceptArtSection({ call, t }: Props): ReactElement {
           view.locked === true && view.credentialConfigured === true && view.chatReady === true;
         setReady(ok);
         setNote(ok ? t('conceptArt.ready') : t('conceptArt.notReady'));
+        if (botSlug === undefined) {
+          setFlags(
+            `locked:${String(view.locked === true)} credential:${String(view.credentialConfigured === true)} chat:${String(view.chatReady === true)} session:missing`,
+          );
+          return;
+        }
+        const opened = viewOf(await callConceptArt(call, { action: 'open', botSlug }));
+        const resolved = typeof opened.sessionId === 'string';
+        if (resolved) setSessionId(opened.sessionId ?? null);
         setFlags(
-          `locked:${String(view.locked === true)} credential:${String(view.credentialConfigured === true)} chat:${String(view.chatReady === true)}`,
+          `locked:${String(view.locked === true)} credential:${String(view.credentialConfigured === true)} chat:${String(view.chatReady === true)} session:${resolved ? 'ready' : 'missing'}`,
         );
-        const saved = await callConceptArt(call, { action: 'styles' });
+        const saved = await callConceptArt(call, { action: 'styles', botSlug });
         if (!live) return;
         const list = viewOf(saved).styles;
         if (Array.isArray(list)) setStyles(list);
@@ -73,12 +109,13 @@ export function ConceptArtSection({ call, t }: Props): ReactElement {
     return () => {
       live = false;
     };
-  }, [call, t]);
+  }, [botSlug, call, t]);
 
   const generate = (): void => {
     void callConceptArt(call, {
       action: 'generateStyle',
-      sessionId: null,
+      sessionId,
+      botSlug,
       styleRef: 'saved-style',
       note: styleNote || raw,
     }).then((value) => {
@@ -115,7 +152,8 @@ export function ConceptArtSection({ call, t }: Props): ReactElement {
             ? { styleRef: picked, def: styles.find((item) => item.styleRef === picked)?.def }
             : {}),
         },
-        sessionId: null,
+        sessionId,
+        ...(botSlug === undefined ? {} : { botSlug }),
         context_version: 1,
         operation_id: idempotencyKey,
         route_idempotency_key: idempotencyKey,
@@ -146,7 +184,7 @@ export function ConceptArtSection({ call, t }: Props): ReactElement {
     if (operationKey === null) return;
     void callConceptArt(call, {
       action: 'cancel',
-      sessionId: 'current',
+      sessionId: sessionId ?? '',
       idempotencyKey: operationKey,
     }).then((value) => {
       const verdict = viewOf(value);
@@ -190,7 +228,9 @@ export function ConceptArtSection({ call, t }: Props): ReactElement {
           />
           <button
             type="button"
-            disabled={!ready || (styleNote.trim() === '' && raw.trim() === '')}
+            disabled={
+              !ready || sessionId === null || (styleNote.trim() === '' && raw.trim() === '')
+            }
             onClick={generate}
           >
             {t('conceptArt.generate')}
@@ -208,7 +248,11 @@ export function ConceptArtSection({ call, t }: Props): ReactElement {
           description={outcome || note}
           control={
             <>
-              <button type="button" disabled={!ready || raw.trim() === ''} onClick={make}>
+              <button
+                type="button"
+                disabled={!ready || sessionId === null || raw.trim() === ''}
+                onClick={make}
+              >
                 {t('conceptArt.make')}
               </button>
               <button type="button" disabled={operationKey === null} onClick={cancel}>

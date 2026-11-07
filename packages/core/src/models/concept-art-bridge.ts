@@ -44,7 +44,11 @@ function requestBody(value: unknown): ConceptArtRequest | undefined {
   return body as unknown as ConceptArtRequest;
 }
 
-export function createConceptArtBridge(input: { conceptArt?: Consumer; sharedRoute?: Route }) {
+export function createConceptArtBridge(input: {
+  conceptArt?: Consumer;
+  sharedRoute?: Route;
+  sessionForBot?: (botSlug: string) => string | null;
+}) {
   return {
     async conceptArt(payload: unknown): Promise<BridgeResult<unknown>> {
       if (input.conceptArt === undefined || input.sharedRoute === undefined) {
@@ -71,8 +75,52 @@ export function createConceptArtBridge(input: { conceptArt?: Consumer; sharedRou
             },
           };
         }
+        if (action === 'open') {
+          const botSlug = body['botSlug'];
+          if (typeof botSlug !== 'string' || botSlug.trim() === '')
+            return invalid('Bot is required.');
+          const sessionId = input.sessionForBot?.(botSlug) ?? null;
+          if (sessionId === null) {
+            return {
+              ok: true,
+              value: {
+                status: 'INTEGRATION_BLOCKED',
+                reasons: ['HOST_CONTEXT_CONTRACT_MISSING'],
+                botSlug,
+              },
+            };
+          }
+          const owner = input.conceptArt.ownerBot(sessionId);
+          if (owner !== botSlug) {
+            return {
+              ok: true,
+              value: { status: 'BLOCKED', reasons: ['BOT_SESSION_MISMATCH'], botSlug },
+            };
+          }
+          const project = input.conceptArt.projectIdFor(sessionId);
+          if ('status' in project) return { ok: true, value: { ...project, botSlug } };
+          return {
+            ok: true,
+            value: { status: 'READY', botSlug, sessionId, projectId: project.projectId },
+          };
+        }
         if (action === 'styles') {
-          return { ok: true, value: { styles: input.conceptArt.listStyles() } };
+          const sessionId = body['sessionId'];
+          const explicit = body['botSlug'];
+          const botSlug =
+            typeof explicit === 'string'
+              ? explicit
+              : typeof sessionId === 'string'
+                ? input.conceptArt.ownerBot(sessionId)
+                : undefined;
+          if (botSlug === undefined) return invalid('Bot or session is required.');
+          if (typeof sessionId === 'string' && input.conceptArt.ownerBot(sessionId) !== botSlug) {
+            return {
+              ok: true,
+              value: { status: 'BLOCKED', reasons: ['BOT_SESSION_MISMATCH'], botSlug },
+            };
+          }
+          return { ok: true, value: { styles: input.conceptArt.listStyles(botSlug) } };
         }
         if (action === 'generateStyle') {
           const styleRef = body['styleRef'];

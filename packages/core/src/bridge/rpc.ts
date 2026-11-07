@@ -1345,8 +1345,17 @@ export class BotharnessBridgeService extends TypertRemoteService {
   }
 
   conceptArt(
-    action: 'status' | 'styles' | 'generateStyle' | 'request' | 'resume' | 'cancel' | 'accept',
+    action:
+      | 'status'
+      | 'open'
+      | 'styles'
+      | 'generateStyle'
+      | 'request'
+      | 'resume'
+      | 'cancel'
+      | 'accept',
     sessionId?: string | null,
+    botSlug?: string,
     styleRef?: string,
     note?: string,
     idempotencyKey?: string,
@@ -1369,12 +1378,14 @@ export class BotharnessBridgeService extends TypertRemoteService {
       route_idempotency_key: string;
       input_fingerprint: string;
       submit_allowed: boolean;
+      botSlug?: string;
     },
   ): Promise<unknown> {
     return unwrapAsync(
       this.methods.conceptArt({
         action,
         ...(sessionId === undefined ? {} : { sessionId }),
+        ...(botSlug === undefined ? {} : { botSlug }),
         ...(styleRef === undefined ? {} : { styleRef }),
         ...(note === undefined ? {} : { note }),
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }),

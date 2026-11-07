@@ -835,12 +835,13 @@ Both commands return `{follows, model}`: `follows` is `bot` (each Bot's own mode
 
 ### Concept art
 
-`deepseekbot concept-art` calls the Host bridge method `conceptArt`. It does not accept an API key. `status` reports the manual image lock, whether that lock's credential reference is configured, and that the chat model catalog is not this image route. `styles` lists saved style definitions. `generate-style <ref>` reads one style note from stdin, calls the shared chat lock, and stores the returned definition; it does not create a user project. `request` reads one JSON object from stdin. `resume` and `cancel` take a session id and the original operation key. `accept <session> <key> <context-version>` reads the stored task. Bytes that parse inside the Host image limits (`MAX_IMAGE_BYTES`, `MAX_IMAGE_PIXELS` from the existing image inspector) return `accept: true` with reason `BYTES_PARSED_NOT_A_RENDER`. `mediaVerified` and `deliverable` stay false: this is not a verified finished picture. The submitted prompt keeps the user's raw text and any selected style definition; a cleared library definition is not appended, and words in the raw text are not deleted. A reference the route cannot carry is blocked. Refusals include `usage` and `invalid-input`.
+`deepseekbot concept-art` calls the Host bridge method `conceptArt`. It does not accept an API key. `status` reports the manual image lock, whether that lock's credential reference is configured, and that the chat model catalog is not this image route. `open <bot>` resolves that Bot's current Host session and does not create a project. `styles <session>` lists style definitions saved for that session's Bot. `generate-style <session> <ref>` reads one style note from stdin, calls the shared chat lock, and stores the definition for that Bot only. `request` reads one JSON object from stdin. `resume` and `cancel` take a session id and the original operation key. `accept <session> <key> <context-version>` reads the stored task. Bytes that parse inside the Host image limits (`MAX_IMAGE_BYTES`, `MAX_IMAGE_PIXELS` from the existing image inspector) return `accept: true` with reason `BYTES_PARSED_NOT_A_RENDER`. `mediaVerified` and `deliverable` stay false: this is not a verified finished picture. The submitted prompt keeps the user's raw text and any selected style definition; a cleared library definition is not appended, and words in the raw text are not deleted. A reference the route cannot carry is blocked. Refusals include `usage` and `invalid-input`.
 
 ```bash
 deepseekbot concept-art status
-deepseekbot concept-art styles
-deepseekbot concept-art generate-style <ref>
+deepseekbot concept-art open <bot>
+deepseekbot concept-art styles <session>
+deepseekbot concept-art generate-style <session> <ref>
 deepseekbot concept-art request
 deepseekbot concept-art resume <session> <key>
 deepseekbot concept-art cancel <session> <key>

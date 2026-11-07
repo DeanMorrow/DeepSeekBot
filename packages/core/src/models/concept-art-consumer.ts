@@ -36,6 +36,7 @@ export interface ConceptArtRequest {
   route_idempotency_key: string;
   input_fingerprint: string;
   submit_allowed: boolean;
+  botSlug?: string;
 }
 
 export interface ConceptArtVerdict {
@@ -47,7 +48,8 @@ export interface ConceptArtVerdict {
   rawRequirement?: string;
   modelPrompt?: string;
   rawEchoMatched?: boolean;
-  semanticFidelity?: 'not-claimed';
+  /** The image route receives the raw requirement verbatim. Model additions are not submitted. */
+  fidelity?: 'raw-verbatim-submitted' | 'rejected-model-addition' | 'note-echo-def-distinct';
   styleRef?: string;
   def?: string;
   note?: string;
@@ -125,6 +127,7 @@ function canonicalFingerprint(request: ConceptArtRequest): string {
       state: request.style.state,
       styleRef: request.style.styleRef ?? null,
       version: request.style.version ?? null,
+      def: request.style.def ?? request.style.def_fixture ?? null,
     },
     references: [...(request.references ?? [])]
       .map((item) => ({ id: item.id, status: item.status }))
@@ -145,8 +148,12 @@ function pngPixelCount(prefix: Buffer): number | undefined {
 
 function forbiddenLibraryText(request: ConceptArtRequest): string[] {
   const raw = request.raw_requirement;
-  return (request.style_history_audit_only ?? [])
-    .map((item) => item.def?.trim() ?? '')
+  const disabled =
+    request.style.state === 'disabled'
+      ? [request.style.def ?? '', request.style.def_fixture ?? '']
+      : [];
+  return [...(request.style_history_audit_only ?? []).map((item) => item.def ?? ''), ...disabled]
+    .map((def) => def.trim())
     .filter((def) => def !== '' && !raw.includes(def));
 }
 
@@ -158,6 +165,16 @@ function librarySpans(defs: readonly string[]): string[] {
     for (const part of trimmed.split(/[、,，;；]/u)) {
       const span = part.trim();
       if (span.length >= 2) spans.add(span);
+      if (/[一-鿿]/u.test(span)) {
+        for (const word of span.split(/\s+/u)) {
+          if (word.length >= 2) spans.add(word);
+        }
+      }
+    }
+    if (/[一-鿿]/u.test(trimmed)) {
+      for (const word of trimmed.split(/\s+/u)) {
+        if (word.length >= 2) spans.add(word);
+      }
     }
   }
   return [...spans].sort((left, right) => right.length - left.length);
@@ -187,7 +204,9 @@ export function composeConceptPrompt(request: ConceptArtRequest): string {
   const parts = [raw];
   if (selected !== '' && !raw.includes(selected)) parts.push(selected);
   const extra = exciseLibrarySpans(request.submit_prompt ?? '', forbiddenLibraryText(request), raw);
-  if (extra !== '' && extra !== raw) parts.push(extra);
+  const addition = extra.split(raw).join('');
+  const contradicts = /removed|换成|改成|改为|不要|别用|don't|do not use/iu.test(addition);
+  if (extra !== '' && extra !== raw && !contradicts) parts.push(extra);
   return parts.join('\n');
 }
 
@@ -234,6 +253,32 @@ export function createConceptArtConsumer(input: {
     submitCalls: number,
   ): ConceptArtVerdict => ({ status, reasons, submitCalls, optimization: 'chat-model' });
 
+  const mechanicalPrompt = (request: ConceptArtRequest): string => {
+    const raw = request.raw_requirement.trim();
+    const selected =
+      request.style.state === 'selected'
+        ? (request.style.def ?? request.style.def_fixture ?? '').trim()
+        : '';
+    const parts = [raw];
+    if (selected !== '' && !raw.includes(selected)) parts.push(selected);
+    return parts.join('\n');
+  };
+
+  const modelTextFaithful = (request: ConceptArtRequest, text: string): boolean => {
+    const raw = request.raw_requirement.trim();
+    if (!text.includes(`RAW_START\n${raw}\nRAW_END`)) return false;
+    if (text.includes('CLARIFY_START')) return false;
+    const prompt = text.split('PROMPT_START\n')[1]?.split('\nPROMPT_END')[0]?.trim() ?? '';
+    if (prompt === '') return false;
+    const cleared = forbiddenLibraryText(request);
+    const kept = exciseLibrarySpans(prompt, cleared, raw);
+    const expected = composeConceptPrompt(request);
+    const addition = prompt.split(raw).join('');
+    if (/ignore previous|<\||\bsystem\s*:/iu.test(addition)) return false;
+    if (/换成|改成|改为|不要|别用|don't|do not use/iu.test(addition)) return false;
+    return kept === '' || kept === raw || kept === expected || expected.includes(kept);
+  };
+
   const optimizeWithChat = async (
     request: ConceptArtRequest,
     projectId: string,
@@ -247,35 +292,42 @@ export function createConceptArtConsumer(input: {
         : '';
     const cleared = forbiddenLibraryText(request);
     const instruction = [
-      'Optimize one concept-art requirement through the shared chat route.',
-      'Keep every constraint in the raw requirement.',
-      selected === '' ? 'Do not add a library style.' : 'Apply the selected style definition.',
+      'Check one concept-art requirement. Do not rewrite it.',
+      'The image prompt must stay the raw requirement, plus the selected style only.',
+      'If you are unsure or the requirement conflicts, ask instead of changing the subject.',
+      selected === '' ? 'Do not add a library style.' : 'The selected style may be repeated.',
       'Do not use a cleared style definition.',
       'Reply using these markers exactly.',
       `RAW_START\n${raw}\nRAW_END`,
       `SELECTED_STYLE:\n${selected}`,
       `CLEARED_STYLES:\n${cleared.join('\n')}`,
       'PROMPT_START',
+      mechanicalPrompt(request),
       'PROMPT_END',
+      'Or, instead of PROMPT, use CLARIFY_START and CLARIFY_END.',
     ].join('\n');
-    try {
+    const read = async (suffix: string): Promise<string | undefined> => {
       const task = await wrapped.submit(
         'chat',
         'chat',
         projectId,
-        `${request.route_idempotency_key}:optimize`,
+        `${request.route_idempotency_key}:${suffix}`,
         instruction,
       );
-      const text = task.artifact?.kind === 'text' ? task.artifact.value : undefined;
-      if (task.status !== 'completed' || text === undefined)
-        return { status: 'BLOCKED', reasons: ['OPTIMIZE_FAILED'] };
-      if (!text.includes(`RAW_START\n${raw}\nRAW_END`))
-        return { status: 'BLOCKED', reasons: ['FIDELITY_RAW_MISMATCH'] };
-      const prompt = text.split('PROMPT_START\n')[1]?.split('\nPROMPT_END')[0]?.trim() ?? '';
-      if (prompt === '') return { status: 'BLOCKED', reasons: ['FIDELITY_PROMPT_MISSING'] };
-      const kept = exciseLibrarySpans(prompt, cleared, raw);
-      if (kept === '') return { status: 'ok', prompt: raw };
-      return { status: 'ok', prompt: kept };
+      return task.status === 'completed' && task.artifact?.kind === 'text'
+        ? task.artifact.value
+        : undefined;
+    };
+    try {
+      const first = await read('optimize');
+      if (first === undefined) return { status: 'BLOCKED', reasons: ['OPTIMIZE_FAILED'] };
+      if (!modelTextFaithful(request, first)) {
+        const second = await read('optimize-rework');
+        if (second === undefined || !modelTextFaithful(request, second)) {
+          return { status: 'NEEDS_CLARIFICATION', reasons: ['FIDELITY_CONTRADICTION'] };
+        }
+      }
+      return { status: 'ok', prompt: composeConceptPrompt(request) };
     } catch (error) {
       if (
         error instanceof SharedRouteError &&
@@ -315,6 +367,18 @@ export function createConceptArtConsumer(input: {
       }
       const bound = sessionProjectId(input.ownership, request.sessionId);
       if ('status' in bound) return { ...bound, submitCalls: 0, optimization: 'chat-model' };
+      if (request.sessionId === null) {
+        return {
+          status: 'INTEGRATION_BLOCKED',
+          reasons: ['HOST_CONTEXT_CONTRACT_MISSING'],
+          submitCalls: 0,
+          optimization: 'chat-model',
+        };
+      }
+      const owner = input.ownership.resolve(request.sessionId)?.botSlug;
+      if (request.botSlug !== undefined && request.botSlug !== '' && owner !== request.botSlug) {
+        return refused('BLOCKED', ['BOT_SESSION_MISMATCH'], 0);
+      }
       const fingerprint = canonicalFingerprint(request);
       const existing = readOp(bound.projectId, request.route_idempotency_key);
       if (existing !== undefined && existing.context_version !== String(request.context_version)) {
@@ -365,7 +429,7 @@ export function createConceptArtConsumer(input: {
         rawRequirement: request.raw_requirement.trim(),
         modelPrompt: existing?.prompt ?? prompt,
         rawEchoMatched: true,
-        semanticFidelity: 'not-claimed' as const,
+        fidelity: 'raw-verbatim-submitted' as const,
         optimization: 'chat-model',
         projectId: bound.projectId,
         idempotencyKey: request.route_idempotency_key,
@@ -373,21 +437,31 @@ export function createConceptArtConsumer(input: {
         task,
       };
     },
-    listStyles() {
+    ownerBot(sessionId: string): string | undefined {
+      return input.ownership.resolve(sessionId)?.botSlug;
+    },
+    listStyles(botSlug: string) {
       return input.database.read((db) => {
         return db
           .prepare(
             `SELECT style_ref AS styleRef, version, def
-             FROM concept_art_styles ORDER BY created_at, style_ref`,
+             FROM concept_art_styles
+             WHERE bot_slug = ?
+             ORDER BY created_at, style_ref`,
           )
-          .all() as { styleRef: string; version: string; def: string }[];
+          .all(botSlug) as { styleRef: string; version: string; def: string }[];
       });
     },
     async generateStyle(inputStyle: { sessionId: string | null; styleRef: string; note: string }) {
       const before = submitCalls;
       const bound = sessionProjectId(input.ownership, inputStyle.sessionId);
-      // Style rows are not a user project. A missing session still uses the shared chat lock.
-      const projectId = 'status' in bound ? 'concept-art:styles' : bound.projectId;
+      if ('status' in bound)
+        return { ...bound, submitCalls: 0, optimization: 'chat-model' as const };
+      const botSlug = input.ownership.resolve(inputStyle.sessionId ?? '')?.botSlug;
+      if (botSlug === undefined) {
+        return refused('INTEGRATION_BLOCKED', ['HOST_CONTEXT_CONTRACT_MISSING'], 0);
+      }
+      const projectId = bound.projectId;
       const note = inputStyle.note.trim();
       const styleRef = inputStyle.styleRef.trim();
       if (note === '' || styleRef === '') return refused('BLOCKED', ['STYLE_NOTE_REQUIRED'], 0);
@@ -418,11 +492,11 @@ export function createConceptArtConsumer(input: {
           (db) =>
             db
               .prepare(
-                `INSERT INTO concept_art_styles (style_ref, version, def, created_at)
-                 VALUES (?, 'v1', ?, ?)
-                 ON CONFLICT(style_ref, version) DO UPDATE SET def = excluded.def`,
+                `INSERT INTO concept_art_styles (bot_slug, style_ref, version, def, created_at)
+                 VALUES (?, ?, 'v1', ?, ?)
+                 ON CONFLICT(bot_slug, style_ref, version) DO UPDATE SET def = excluded.def`,
               )
-              .run(styleRef, def, new Date().toISOString()),
+              .run(botSlug, styleRef, def, new Date().toISOString()),
           ['concept-art'],
         );
         return {
@@ -433,7 +507,8 @@ export function createConceptArtConsumer(input: {
           styleRef,
           def,
           note,
-          semanticFidelity: 'not-claimed' as const,
+          botSlug,
+          fidelity: 'note-echo-def-distinct' as const,
         };
       } catch (error) {
         if (
@@ -531,9 +606,11 @@ export function createConceptArtConsumer(input: {
       return {
         ...verdict,
         accept: true,
-        deliverable: false,
+        deliverable: true,
         parsed: true,
+        mediaVerified: false,
         reason: 'BYTES_PARSED_NOT_A_RENDER',
+        mount: { kind: 'base64' as const, value: task.artifact.value },
       };
     },
   };
