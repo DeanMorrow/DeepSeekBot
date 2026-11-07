@@ -34,6 +34,13 @@ type Verdict = {
   def?: string;
   sessionId?: string;
   botSlug?: string;
+  proposedPrompt?: string;
+  preview?: string;
+  userVisible?: boolean;
+  delivery?: string;
+  quality?: string;
+  fidelity?: string;
+  promptSource?: string;
 };
 
 export function conceptArtCall(conceptArt: BridgeActions['conceptArt']): BridgeCall {
@@ -94,6 +101,8 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   const [operationKey, setOperationKey] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [unassigned, setUnassigned] = useState(0);
+  const [proposed, setProposed] = useState('');
+  const [preview, setPreview] = useState('');
 
   useEffect(() => {
     let live = true;
@@ -188,6 +197,10 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
     }).then((value) => {
       const verdict = viewOf(value);
       setOperationKey(typeof verdict.idempotencyKey === 'string' ? verdict.idempotencyKey : null);
+      setProposed(typeof verdict.proposedPrompt === 'string' ? verdict.proposedPrompt : '');
+      setPreview(
+        verdict.userVisible === true && typeof verdict.preview === 'string' ? verdict.preview : '',
+      );
       setOutcome(
         [
           verdict.status ?? '',
@@ -205,6 +218,43 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
     });
   };
 
+  const confirm = (): void => {
+    if (sessionId === null || proposed === '') return;
+    const idempotencyKey = `concept-confirm-${proposed.length}`;
+    void callConceptArt(call, {
+      action: 'request',
+      request: {
+        raw_requirement: raw,
+        style: { state: styleState },
+        sessionId,
+        ...(botSlug === undefined ? {} : { botSlug }),
+        confirmedPrompt: proposed,
+        context_version: 1,
+        operation_id: idempotencyKey,
+        route_idempotency_key: idempotencyKey,
+        input_fingerprint: idempotencyKey,
+        submit_allowed: true,
+      },
+    }).then((value) => {
+      const verdict = viewOf(value);
+      setProposed('');
+      setPreview(
+        verdict.userVisible === true && typeof verdict.preview === 'string' ? verdict.preview : '',
+      );
+      setOutcome(
+        [
+          verdict.status ?? '',
+          verdict.fidelity ?? '',
+          verdict.promptSource ?? '',
+          verdict.quality ?? '',
+          verdict.delivery ?? '',
+        ]
+          .filter((item) => item !== '')
+          .join('\n'),
+      );
+    });
+  };
+
   const cancel = (): void => {
     if (operationKey === null) return;
     void callConceptArt(call, {
@@ -213,9 +263,11 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
       idempotencyKey: operationKey,
     }).then((value) => {
       const verdict = viewOf(value);
+      setPreview('');
+      setProposed('');
       setOutcome(
-        verdict.artifact == null
-          ? `${t('conceptArt.cancel')}\ndeliverable:false`
+        verdict.artifact == null && verdict.preview === undefined
+          ? `${t('conceptArt.cancel')}\nuserVisible:false`
           : t('conceptArt.result'),
       );
     });
@@ -274,6 +326,13 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
               onChange={(event) => setRaw(event.target.value)}
             />
           </SettingsRow>
+          {proposed === '' ? null : (
+            <SettingsRow title={t('conceptArt.prompt')} description={proposed}>
+              <button type="button" {...stylex.props(panel.button)} onClick={confirm}>
+                {t('conceptArt.confirm')}
+              </button>
+            </SettingsRow>
+          )}
           <SettingsRow
             title={t('conceptArt.result')}
             description={outcome || note}
@@ -298,6 +357,14 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
               </>
             }
           />
+          {preview === '' ? null : (
+            <>
+              <img alt={t('conceptArt.preview')} src={`data:image/png;base64,${preview}`} />
+              <a download="concept-art.png" href={`data:image/png;base64,${preview}`}>
+                {t('conceptArt.save')}
+              </a>
+            </>
+          )}
         </SettingsSection>
       </SettingsRows>
     </div>

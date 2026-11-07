@@ -776,9 +776,29 @@ describe('concept art host chain', () => {
       input_fingerprint: 'mount-1',
       submit_allowed: true,
     });
-    expect(made.prompt).toContain('一张码头');
-    expect(made.prompt).toContain('雨丝');
-    expect(made.promptSource).toBe('model-addition-kept');
+    expect(made).toMatchObject({
+      status: 'NEEDS_CONFIRMATION',
+      fidelity: 'unverified-model-addition',
+      promptSource: 'model-addition-held',
+    });
+    expect(made.proposedPrompt).toContain('雨丝');
+    const confirmed = await core.conceptArt.request({
+      raw_requirement: '一张码头',
+      style: { state: 'none' },
+      sessionId: ada?.sessionId ?? '',
+      botSlug: 'ada',
+      confirmedPrompt: '一张码头\n雨丝',
+      context_version: 1,
+      operation_id: 'mount-1',
+      route_idempotency_key: 'mount-1',
+      input_fingerprint: 'mount-1b',
+      submit_allowed: true,
+    });
+    expect(confirmed).toMatchObject({
+      status: 'ALLOWED',
+      fidelity: 'user-accepted-unverified',
+      promptSource: 'user-accepted-model-addition',
+    });
     const mounted = await methods.conceptArt({
       action: 'accept',
       sessionId: ada?.sessionId,
@@ -792,6 +812,9 @@ describe('concept art host chain', () => {
       mediaVerified: false,
       reason: 'BYTES_PARSED_NOT_A_RENDER',
       delivery: 'mounted-unverified',
+      userVisible: true,
+      quality: 'unverified',
+      preview: PNG,
     });
     const file = (mounted.ok ? mounted.value : undefined) as {
       file?: { fileId: string; size: number };

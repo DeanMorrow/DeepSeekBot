@@ -1379,6 +1379,7 @@ export class BotharnessBridgeService extends TypertRemoteService {
       input_fingerprint: string;
       submit_allowed: boolean;
       botSlug?: string;
+      confirmedPrompt?: string;
     },
   ): Promise<unknown> {
     return unwrapAsync(

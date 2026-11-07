@@ -37,20 +37,32 @@ export interface ConceptArtRequest {
   input_fingerprint: string;
   submit_allowed: boolean;
   botSlug?: string;
+  confirmedPrompt?: string;
 }
 
 export interface ConceptArtVerdict {
-  status: 'ALLOWED' | 'BLOCKED' | 'INTEGRATION_BLOCKED' | 'NEEDS_CLARIFICATION' | 'NOT_READY';
+  status:
+    | 'ALLOWED'
+    | 'BLOCKED'
+    | 'INTEGRATION_BLOCKED'
+    | 'NEEDS_CLARIFICATION'
+    | 'NEEDS_CONFIRMATION'
+    | 'NOT_READY';
   reasons: string[];
   submitCalls: number;
   /** chat-model: the shared chat route ran. promptSource says whether its text was kept. */
   optimization: 'chat-model';
-  promptSource?: 'echo-only' | 'model-addition-kept';
+  promptSource?: 'echo-only' | 'model-addition-held' | 'user-accepted-model-addition';
   rawRequirement?: string;
   modelPrompt?: string;
   rawEchoMatched?: boolean;
-  /** The image route receives the raw requirement verbatim. Model additions are not submitted. */
-  fidelity?: 'raw-verbatim-submitted' | 'rejected-model-addition' | 'note-echo-def-distinct';
+  /** raw-plus-selected-only is not an optimization. Additions stay unverified until the user accepts them. */
+  fidelity?:
+    | 'raw-plus-selected-only'
+    | 'unverified-model-addition'
+    | 'user-accepted-unverified'
+    | 'note-echo-def-distinct';
+  proposedPrompt?: string;
   styleRef?: string;
   def?: string;
   note?: string;
@@ -134,6 +146,7 @@ function canonicalFingerprint(request: ConceptArtRequest): string {
       .map((item) => ({ id: item.id, status: item.status }))
       .sort((left, right) => left.id.localeCompare(right.id)),
     operation_id: request.operation_id,
+    confirmedPrompt: request.confirmedPrompt ?? '',
   };
   return createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
 }
@@ -149,13 +162,17 @@ function pngPixelCount(prefix: Buffer): number | undefined {
 
 function forbiddenLibraryText(request: ConceptArtRequest): string[] {
   const raw = request.raw_requirement;
+  const selected =
+    request.style.state === 'selected'
+      ? (request.style.def ?? request.style.def_fixture ?? '').trim()
+      : '';
   const disabled =
     request.style.state === 'disabled'
       ? [request.style.def ?? '', request.style.def_fixture ?? '']
       : [];
   return [...(request.style_history_audit_only ?? []).map((item) => item.def ?? ''), ...disabled]
     .map((def) => def.trim())
-    .filter((def) => def !== '' && !raw.includes(def));
+    .filter((def) => def !== '' && def !== selected && !raw.includes(def));
 }
 
 function librarySpans(defs: readonly string[]): string[] {
@@ -182,10 +199,15 @@ function librarySpans(defs: readonly string[]): string[] {
 }
 
 /** Remove library-style spans that are not already the user's own raw words. Keep the rest of the sentence. */
-export function exciseLibrarySpans(text: string, defs: readonly string[], raw: string): string {
+export function exciseLibrarySpans(
+  text: string,
+  defs: readonly string[],
+  raw: string,
+  keep = '',
+): string {
   let next = text;
   for (const span of librarySpans(defs)) {
-    if (raw.includes(span)) continue;
+    if (raw.includes(span) || (keep !== '' && keep.includes(span))) continue;
     next = next.split(span).join('');
   }
   return next
@@ -265,24 +287,39 @@ export function createConceptArtConsumer(input: {
     return parts.join('\n');
   };
 
-  const promptFromModel = (request: ConceptArtRequest, text: string): string | undefined => {
+  const promptFromModel = (
+    request: ConceptArtRequest,
+    text: string,
+  ): { kind: 'echo'; prompt: string } | { kind: 'addition'; proposed: string } | undefined => {
     const raw = request.raw_requirement.trim();
     if (!text.includes(`RAW_START\n${raw}\nRAW_END`)) return undefined;
     if (text.includes('CLARIFY_START')) return undefined;
     const prompt = text.split('PROMPT_START\n')[1]?.split('\nPROMPT_END')[0]?.trim() ?? '';
     if (!prompt.includes(raw)) return undefined;
-    const kept = exciseLibrarySpans(prompt, forbiddenLibraryText(request), raw);
+    const selected =
+      request.style.state === 'selected'
+        ? (request.style.def ?? request.style.def_fixture ?? '').trim()
+        : '';
+    const kept = exciseLibrarySpans(prompt, forbiddenLibraryText(request), raw, selected);
     if (!kept.includes(raw)) return undefined;
-    const userExtra = composeConceptPrompt(request).slice(raw.length).trim();
-    if (userExtra !== '' && !kept.includes(userExtra)) return `${kept}\n${userExtra}`;
-    return kept;
+    const composed = composeConceptPrompt(request);
+    if (kept === mechanicalPrompt(request) || kept === composed) {
+      return { kind: 'echo', prompt: composed };
+    }
+    return { kind: 'addition', proposed: kept };
   };
 
   const optimizeWithChat = async (
     request: ConceptArtRequest,
     projectId: string,
   ): Promise<
-    { status: 'ok'; prompt: string } | { status: ConceptArtVerdict['status']; reasons: string[] }
+    | { status: 'ok'; prompt: string }
+    | {
+        status: 'NEEDS_CONFIRMATION';
+        reasons: string[];
+        proposedPrompt: string;
+      }
+    | { status: ConceptArtVerdict['status']; reasons: string[] }
   > => {
     const raw = request.raw_requirement.trim();
     const selected =
@@ -326,7 +363,14 @@ export function createConceptArtConsumer(input: {
       if (accepted === undefined) {
         return { status: 'NEEDS_CLARIFICATION', reasons: ['FIDELITY_CONTRADICTION'] };
       }
-      return { status: 'ok', prompt: accepted };
+      if (accepted.kind === 'addition') {
+        return {
+          status: 'NEEDS_CONFIRMATION',
+          reasons: ['MODEL_ADDITION_UNVERIFIED'],
+          proposedPrompt: accepted.proposed,
+        };
+      }
+      return { status: 'ok', prompt: accepted.prompt };
     } catch (error) {
       if (
         error instanceof SharedRouteError &&
@@ -389,9 +433,60 @@ export function createConceptArtConsumer(input: {
       ) {
         return refused('BLOCKED', ['IDEMPOTENCY_KEY_PAYLOAD_MISMATCH'], 0);
       }
+      const raw = request.raw_requirement.trim();
       let prompt = existing?.prompt;
+      let promptSource: ConceptArtVerdict['promptSource'] = 'echo-only';
+      let fidelity: ConceptArtVerdict['fidelity'] = 'raw-plus-selected-only';
+      if (prompt === undefined && request.confirmedPrompt !== undefined) {
+        if (!request.confirmedPrompt.includes(raw)) {
+          return {
+            status: 'NEEDS_CLARIFICATION',
+            reasons: ['FIDELITY_CONTRADICTION'],
+            submitCalls: 0,
+            optimization: 'chat-model',
+            fidelity: 'unverified-model-addition',
+            promptSource: 'model-addition-held',
+            rawRequirement: raw,
+          };
+        }
+        const confirmed = request.confirmedPrompt;
+        prompt = confirmed;
+        promptSource = 'user-accepted-model-addition';
+        fidelity = 'user-accepted-unverified';
+        input.database.transaction(
+          (db) =>
+            db
+              .prepare(
+                `INSERT INTO concept_art_operations
+                 (session_id, idempotency_key, operation_id, context_version, fingerprint, prompt)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+              )
+              .run(
+                bound.projectId,
+                request.route_idempotency_key,
+                request.operation_id,
+                String(request.context_version),
+                fingerprint,
+                confirmed,
+              ),
+          ['concept-art'],
+        );
+      }
       if (prompt === undefined) {
         const model = await optimizeWithChat(request, bound.projectId);
+        if (model.status === 'NEEDS_CONFIRMATION' && 'proposedPrompt' in model) {
+          const proposedPrompt = model.proposedPrompt;
+          return {
+            status: 'NEEDS_CONFIRMATION',
+            reasons: model.reasons,
+            submitCalls: submitCalls - before,
+            optimization: 'chat-model',
+            promptSource: 'model-addition-held',
+            fidelity: 'unverified-model-addition',
+            proposedPrompt,
+            rawRequirement: raw,
+          };
+        }
         if (model.status !== 'ok') return refused(model.status, model.reasons, 0);
         const storedPrompt = model.prompt;
         prompt = storedPrompt;
@@ -427,13 +522,10 @@ export function createConceptArtConsumer(input: {
         submitCalls: submitCalls - before,
         rawRequirement: request.raw_requirement.trim(),
         modelPrompt: existing?.prompt ?? prompt,
-        rawEchoMatched: true,
-        fidelity: 'raw-verbatim-submitted' as const,
+        rawEchoMatched: prompt.includes(raw),
+        fidelity,
         optimization: 'chat-model',
-        promptSource:
-          (existing?.prompt ?? prompt) === mechanicalPrompt(request)
-            ? ('echo-only' as const)
-            : ('model-addition-kept' as const),
+        promptSource,
         projectId: bound.projectId,
         idempotencyKey: request.route_idempotency_key,
         prompt: existing?.prompt ?? prompt,

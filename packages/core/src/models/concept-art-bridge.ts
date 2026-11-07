@@ -197,18 +197,48 @@ export function createConceptArtBridge(input: {
           if (saved.size !== bytes.length || saved.fileId === undefined) {
             return {
               ok: true,
-              value: { ...verdict, delivery: 'not-mounted', mediaVerified: false },
+              value: {
+                ...verdict,
+                delivery: 'not-mounted',
+                userVisible: false,
+                mediaVerified: false,
+              },
+            };
+          }
+          const downloaded = await input.attachments.download(saved.fileId, saved.name);
+          const chunks: Uint8Array[] = [];
+          const reader = downloaded.body.getReader();
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            if (chunk.value !== undefined) chunks.push(chunk.value);
+          }
+          const stored = Buffer.concat(chunks);
+          if (!stored.equals(bytes)) {
+            return {
+              ok: true,
+              value: {
+                ...verdict,
+                delivery: 'not-mounted',
+                userVisible: false,
+                mediaVerified: false,
+              },
             };
           }
           return {
             ok: true,
             value: {
               ...verdict,
+              parsed: true,
               deliverable: true,
+              userVisible: true,
               mediaVerified: false,
+              quality: 'unverified',
               reason: 'BYTES_PARSED_NOT_A_RENDER',
               delivery: 'mounted-unverified',
+              imageSource: 'attachment-readback',
               file: { fileId: saved.fileId, name: saved.name, size: saved.size },
+              preview: stored.toString('base64'),
             },
           };
         }

@@ -157,7 +157,8 @@ describe('concept art consumer', () => {
     expect(opened.status).toBe('ALLOWED');
     expect(opened.prompt).toContain('渡轮主体完整');
     expect(opened.prompt).not.toBe(String(none.expected.submit_prompt));
-    expect(opened.fidelity).toBe('raw-verbatim-submitted');
+    expect(opened.fidelity).toBe('raw-plus-selected-only');
+    expect(opened.promptSource).toBe('echo-only');
     expect(opened.optimization).toBe('chat-model');
     expect(opened.projectId).toBe('session:fixture-ctx-1');
     expect(opened.task?.projectId).toBe('session:fixture-ctx-1');
@@ -872,9 +873,71 @@ describe('concept art consumer', () => {
       route_idempotency_key: 'op-opt',
       input_fingerprint: 'fp-opt',
     });
-    expect(optimized.status).toBe('ALLOWED');
-    expect(optimized.prompt).toContain('水彩码头');
-    expect(optimized.prompt).toContain('雨丝更密');
+    expect(optimized).toMatchObject({
+      status: 'NEEDS_CONFIRMATION',
+      fidelity: 'unverified-model-addition',
+      promptSource: 'model-addition-held',
+    });
+    expect(optimized.proposedPrompt).toContain('雨丝更密');
+    expect(optimized.fidelity).not.toBe('raw-verbatim-submitted');
+    expect(env.posts()).toBe(beforeImages);
+    env.chatScripts.push({
+      choices: [
+        {
+          message: {
+            content:
+              'RAW_START\n水彩码头\nRAW_END\nPROMPT_START\n水彩码头\n不要水彩，改为沙漠航拍\nPROMPT_END',
+          },
+        },
+      ],
+    });
+    const contradictedAddition = await consumer.request({
+      ...base,
+      raw_requirement: '水彩码头',
+      style: { state: 'none' },
+      operation_id: 'op-desert',
+      route_idempotency_key: 'op-desert',
+      input_fingerprint: 'fp-desert',
+    });
+    expect(contradictedAddition.status).toBe('NEEDS_CONFIRMATION');
+    expect(contradictedAddition.proposedPrompt).toContain('不要水彩，改为沙漠航拍');
+    expect(env.posts()).toBe(beforeImages);
+    env.chatScripts.push({
+      choices: [
+        {
+          message: {
+            content:
+              'RAW_START\n水彩码头\nRAW_END\nPROMPT_START\n水彩码头\n增加两个路人\nPROMPT_END',
+          },
+        },
+      ],
+    });
+    const extraPeople = await consumer.request({
+      ...base,
+      raw_requirement: '水彩码头',
+      style: { state: 'none' },
+      operation_id: 'op-people',
+      route_idempotency_key: 'op-people',
+      input_fingerprint: 'fp-people',
+    });
+    expect(extraPeople.status).toBe('NEEDS_CONFIRMATION');
+    expect(extraPeople.proposedPrompt).toContain('增加两个路人');
+    expect(env.posts()).toBe(beforeImages);
+    const accepted = await consumer.request({
+      ...base,
+      raw_requirement: '水彩码头',
+      style: { state: 'none' },
+      confirmedPrompt: '水彩码头\n雨丝更密',
+      operation_id: 'op-accept-addition',
+      route_idempotency_key: 'op-accept-addition',
+      input_fingerprint: 'fp-accept-addition',
+    });
+    expect(accepted).toMatchObject({
+      status: 'ALLOWED',
+      fidelity: 'user-accepted-unverified',
+      promptSource: 'user-accepted-model-addition',
+    });
+    expect(accepted.prompt).toContain('雨丝更密');
     expect(env.posts()).toBe(beforeImages + 1);
     const spaced = await consumer.request({
       ...base,
