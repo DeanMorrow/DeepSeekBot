@@ -470,6 +470,24 @@ export function createSharedModelRoute(
         createdAt: now(),
       };
       assertProtocol(stored);
+      const previous = readInstance(stored.id);
+      if (previous !== undefined) {
+        if (
+          previous.gateway !== stored.gateway ||
+          previous.vendor !== stored.vendor ||
+          previous.capability !== stored.capability ||
+          previous.protocol !== stored.protocol ||
+          previous.baseUrl !== stored.baseUrl ||
+          previous.credentialRef !== stored.credentialRef
+        ) {
+          throw new SharedRouteError(
+            'instance-identity-mismatch',
+            'This instance already stores a different protocol or credential. The previous models were kept.',
+          );
+        }
+        stored.models = [...new Set([...previous.models, ...stored.models])];
+        stored.createdAt = previous.createdAt;
+      }
       if (key !== undefined) {
         if (key.trim() === '') throw new SharedRouteError('invalid-input', 'The key is empty.');
         if (await secrets.configured(stored.credentialRef)) {

@@ -186,7 +186,7 @@ export function ConceptRouteSettings({
           onChange={(event) => setCredentialRef(event.target.value)}
         />
       </SettingsRow>
-      <SettingsRow title={t('conceptRoute.modelName')}>
+      <SettingsRow title={t('conceptRoute.modelName')} description={t('conceptRoute.allowlist')}>
         <input
           aria-label={t('conceptRoute.modelName')}
           value={modelName}

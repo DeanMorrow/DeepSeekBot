@@ -147,6 +147,92 @@ describe('concept art route lock', () => {
     other.owner.close();
   });
 
+  it('keeps earlier models when another model is saved and does not drop the other lock', async () => {
+    const home = createTempRoot('concept-route-merge-');
+    const store = secrets();
+    const env = opened(home, store);
+    await env.bridge.conceptArt({
+      action: 'saveRoute',
+      route: {
+        id: 'chat-main',
+        protocol: 'openai-chat',
+        credentialRef: 'apiyi-account',
+        models: ['vendor-chat-a'],
+        key: 'sk-isolated-test',
+      },
+    });
+    await env.bridge.conceptArt({
+      action: 'lockRoute',
+      lock: { consumer: 'chat', instanceId: 'chat-main', model: 'vendor-chat-a' },
+    });
+    const added = await env.bridge.conceptArt({
+      action: 'saveRoute',
+      route: {
+        id: 'chat-main',
+        protocol: 'openai-chat',
+        credentialRef: 'apiyi-account',
+        models: ['vendor-chat-b'],
+      },
+    });
+    expect(added.ok ? added.value : undefined).toMatchObject({
+      models: ['vendor-chat-a', 'vendor-chat-b'],
+    });
+    const repeated = await env.bridge.conceptArt({
+      action: 'saveRoute',
+      route: {
+        id: 'chat-main',
+        protocol: 'openai-chat',
+        credentialRef: 'apiyi-account',
+        models: ['vendor-chat-b'],
+      },
+    });
+    expect(repeated.ok ? (repeated.value as { models: string[] }).models : []).toEqual([
+      'vendor-chat-a',
+      'vendor-chat-b',
+    ]);
+    await env.bridge.conceptArt({
+      action: 'saveRoute',
+      route: {
+        id: 'image-main',
+        protocol: 'openai-images',
+        credentialRef: 'apiyi-account',
+        models: ['vendor-image-a'],
+      },
+    });
+    await env.bridge.conceptArt({
+      action: 'lockRoute',
+      lock: { consumer: 'concept-art', instanceId: 'image-main', model: 'vendor-image-a' },
+    });
+    await env.bridge.conceptArt({
+      action: 'lockRoute',
+      lock: { consumer: 'chat', instanceId: 'chat-main', model: 'vendor-chat-b' },
+    });
+    const kept = await env.bridge.conceptArt({ action: 'routes' });
+    expect(kept.ok ? kept.value : undefined).toMatchObject({
+      chat: { locked: true, model: 'vendor-chat-b' },
+      image: { locked: true, model: 'vendor-image-a' },
+    });
+    const rejected = await env.bridge.conceptArt({
+      action: 'saveRoute',
+      route: {
+        id: 'chat-main',
+        protocol: 'openai-images',
+        credentialRef: 'apiyi-account',
+        models: ['vendor-image-b'],
+      },
+    });
+    expect(rejected.ok).toBe(false);
+    const after = await env.bridge.conceptArt({ action: 'routes' });
+    const instances = (after.ok ? after.value : undefined) as {
+      instances: { id: string; models: string[]; protocol: string }[];
+    };
+    expect(instances.instances.find((item) => item.id === 'chat-main')).toMatchObject({
+      protocol: 'openai-chat',
+      models: ['vendor-chat-a', 'vendor-chat-b'],
+    });
+    env.owner.close();
+  });
+
   it('reads a new key only from stdin and omits it when the reference is already stored', async () => {
     const seen: Record<string, unknown>[] = [];
     const connect = async () => async (_method: string, payload: Record<string, unknown>) => {
