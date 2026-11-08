@@ -132,6 +132,11 @@ function cleanId(value: string, label: string): string {
   return text;
 }
 
+/** Instance ids are lowercase. A credential reference may contain capitals. */
+function storedInstanceId(value: string): string {
+  return cleanId(value.trim().toLowerCase(), 'Instance id');
+}
+
 function assertProtocol(spec: InstanceSpec): void {
   if (spec.gateway === 'apiyi') {
     if (spec.protocol === 'official-native') {
@@ -459,7 +464,7 @@ export function createSharedModelRoute(
   return {
     async saveInstance(spec: InstanceSpec, key?: string): Promise<PublicInstance> {
       const stored: StoredInstance = {
-        id: cleanId(spec.id, 'Instance id'),
+        id: storedInstanceId(spec.id),
         gateway: spec.gateway,
         vendor: cleanId(spec.vendor, 'Vendor'),
         capability: spec.capability,
@@ -561,7 +566,8 @@ export function createSharedModelRoute(
       return task;
     },
     lock(consumer: RouteConsumer, capability: ModelCapability, providerId: string, model: string) {
-      const instance = readInstance(providerId);
+      const storedId = storedInstanceId(providerId);
+      const instance = readInstance(storedId);
       if (
         instance === undefined ||
         instance.capability !== capability ||
@@ -581,7 +587,7 @@ export function createSharedModelRoute(
                ON CONFLICT(consumer, capability) DO UPDATE SET
                  provider_id = excluded.provider_id, model = excluded.model`,
             )
-            .run(consumer, capability, providerId, model),
+            .run(consumer, capability, storedId, model),
         ['shared-model'],
       );
     },

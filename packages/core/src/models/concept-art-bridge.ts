@@ -134,7 +134,8 @@ export function createConceptArtBridge(input: {
           }
           const capability = consumer === 'chat' ? 'chat' : 'image';
           const instances = await input.sharedRoute.listInstances();
-          const instance = instances.find((item) => item.id === instanceId);
+          const wanted = instanceId.trim().toLowerCase();
+          const instance = instances.find((item) => item.id === wanted);
           if (
             instance === undefined ||
             instance.capability !== capability ||
@@ -157,7 +158,7 @@ export function createConceptArtBridge(input: {
               },
             };
           }
-          input.sharedRoute.lock(consumer, capability, instanceId, model);
+          input.sharedRoute.lock(consumer, capability, instance.id, model);
           const current = await input.sharedRoute.describeConsumer(consumer, capability);
           return { ok: true, value: current };
         }

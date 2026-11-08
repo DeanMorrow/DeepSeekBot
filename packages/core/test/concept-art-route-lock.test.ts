@@ -233,6 +233,65 @@ describe('concept art route lock', () => {
     env.owner.close();
   });
 
+  it('accepts a capital credential reference in the instance id and keeps earlier names', async () => {
+    const env = opened(createTempRoot('concept-case-'), secrets());
+    const first = await env.bridge.conceptArt({
+      action: 'saveRoute',
+      route: {
+        id: 'openai-chat-ISOLATED_TEST_KEY',
+        protocol: 'openai-chat',
+        credentialRef: 'ISOLATED_TEST_KEY',
+        models: ['allowlist-chat-a'],
+        key: 'sk-case-test',
+      },
+    });
+    expect(JSON.stringify(first)).not.toContain('sk-case-test');
+    expect(first.ok ? first.value : undefined).toMatchObject({
+      id: 'openai-chat-isolated_test_key',
+      credentialRef: 'ISOLATED_TEST_KEY',
+      models: ['allowlist-chat-a'],
+    });
+    const second = await env.bridge.conceptArt({
+      action: 'saveRoute',
+      route: {
+        id: 'openai-chat-ISOLATED_TEST_KEY',
+        protocol: 'openai-chat',
+        credentialRef: 'ISOLATED_TEST_KEY',
+        models: ['allowlist-chat-c'],
+      },
+    });
+    expect(second.ok ? second.value : undefined).toMatchObject({
+      models: ['allowlist-chat-a', 'allowlist-chat-c'],
+    });
+    const locked = await env.bridge.conceptArt({
+      action: 'lockRoute',
+      lock: {
+        consumer: 'chat',
+        instanceId: 'openai-chat-ISOLATED_TEST_KEY',
+        model: 'allowlist-chat-c',
+      },
+    });
+    expect(locked.ok ? locked.value : undefined).toMatchObject({
+      locked: true,
+      model: 'allowlist-chat-c',
+      providerId: 'openai-chat-isolated_test_key',
+    });
+    const image = await env.bridge.conceptArt({
+      action: 'saveRoute',
+      route: {
+        id: 'openai-images-ISOLATED_TEST_KEY',
+        protocol: 'openai-images',
+        credentialRef: 'ISOLATED_TEST_KEY',
+        models: ['allowlist-image-a'],
+      },
+    });
+    expect(image.ok ? image.value : undefined).toMatchObject({
+      id: 'openai-images-isolated_test_key',
+      models: ['allowlist-image-a'],
+    });
+    env.owner.close();
+  });
+
   it('reads a new key only from stdin and omits it when the reference is already stored', async () => {
     const seen: Record<string, unknown>[] = [];
     const connect = async () => async (_method: string, payload: Record<string, unknown>) => {

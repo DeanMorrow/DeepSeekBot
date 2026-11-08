@@ -1195,6 +1195,7 @@ export const zh = {
   'conceptRoute.key': '密钥',
   'conceptRoute.keyKept': 'DSH 里已有的凭证引用会直接用，不会再复制一把密钥。',
   'conceptRoute.save': '保存并锁定',
+  'conceptRoute.needFields': '请填写凭证引用和模型名。',
   'conceptRoute.empty': '还没有可锁定的模型。',
   'conceptArt.ready': '可以开始。解析通过也不等于成品图。',
   'conceptArt.raw': '需求',
@@ -6059,6 +6060,7 @@ export const en = {
   'conceptRoute.keyKept':
     'An existing DSH credential reference is used directly. A second key is not stored.',
   'conceptRoute.save': 'Save and lock',
+  'conceptRoute.needFields': 'Enter a credential reference and a model name.',
   'conceptRoute.empty': 'No model is available to lock.',
   'conceptArt.ready': 'Ready to start. A parsed image is not a finished picture.',
   'conceptArt.raw': 'Requirement',

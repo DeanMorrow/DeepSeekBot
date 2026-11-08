@@ -15,6 +15,32 @@ afterEach(() => {
 
 const t = ((key: string) => key) as BotHarnessTranslate;
 
+it('says what to fill when the model name is empty and does not save', async () => {
+  const sent: Record<string, unknown>[] = [];
+  const conceptArt: BridgeActions['conceptArt'] = async (payload) => {
+    sent.push(payload);
+    return { protocols: [], instances: [], chat: { locked: false }, image: { locked: false } };
+  };
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  roots.push(root);
+  await act(async () => {
+    root.render(createElement(ConceptRouteSettings, { conceptArt, t }));
+    await Promise.resolve();
+  });
+  const save = [...host.querySelectorAll('button')].find(
+    (button) => button.textContent === 'conceptRoute.save',
+  ) as HTMLButtonElement;
+  await act(async () => {
+    save.click();
+    await Promise.resolve();
+  });
+  expect(host.textContent).toContain('conceptRoute.needFields');
+  expect(sent.some((item) => item['action'] === 'saveRoute')).toBe(false);
+  expect(save.disabled).toBe(false);
+});
+
 it('locks a saved model and does not ask for a key that is already stored', async () => {
   const sent: Record<string, unknown>[] = [];
   let configured = false;

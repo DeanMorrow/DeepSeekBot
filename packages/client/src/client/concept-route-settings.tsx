@@ -83,28 +83,40 @@ export function ConceptRouteSettings({
   };
 
   const save = (): void => {
-    if (conceptArt === undefined || modelName.trim() === '' || credentialRef.trim() === '') return;
+    if (conceptArt === undefined) return;
+    if (modelName.trim() === '' || credentialRef.trim() === '') {
+      setNote(t('conceptRoute.needFields'));
+      return;
+    }
     const id = `${protocol}-${credentialRef.trim()}`;
+    const model = modelName.trim();
     void conceptArt({
       action: 'saveRoute',
       route: {
         id,
         protocol,
         credentialRef: credentialRef.trim(),
-        models: [modelName.trim()],
+        models: [model],
         ...(needsKey ? { key } : {}),
       },
     })
-      .then(() =>
-        conceptArt({
+      .then((saved) => {
+        const savedId =
+          typeof saved === 'object' &&
+          saved !== null &&
+          'id' in saved &&
+          typeof saved.id === 'string'
+            ? saved.id
+            : id;
+        return conceptArt({
           action: 'lockRoute',
           lock: {
             consumer: protocol === 'openai-chat' ? 'chat' : 'concept-art',
-            instanceId: id,
-            model: modelName.trim(),
+            instanceId: savedId,
+            model,
           },
-        }),
-      )
+        });
+      })
       .then(() => {
         setKey('');
         setAskKey(false);
