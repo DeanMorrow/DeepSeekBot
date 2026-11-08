@@ -6,7 +6,7 @@ export const CONCEPT_ART_COMMANDS = [
   {
     command: 'concept-art',
     description:
-      'call the Host concept-art bridge: status, styles, generate-style, request (JSON on stdin), resume, cancel, or accept. No key is accepted here.',
+      'call the Host concept-art bridge: status, routes, save-route, lock-route, styles, generate-style, request (JSON on stdin), resume, cancel, or accept. A key is read from stdin only for save-route when the credential is not already stored.',
   },
 ] as const;
 
@@ -26,6 +26,35 @@ export async function runConceptArtCommand(
 ): Promise<unknown> {
   const action = rest[0];
   if (action === 'status' && rest.length === 1) return (await connect())('conceptArt', { action });
+  if (action === 'routes' && rest.length === 1) return (await connect())('conceptArt', { action });
+  if (action === 'save-route' && (rest.length === 5 || rest.length === 6)) {
+    const keyStdin = rest[5];
+    if (keyStdin !== undefined && keyStdin !== '--key-stdin') {
+      usage(
+        'concept-art save-route accepts an optional --key-stdin and never takes the key as an argument.',
+      );
+    }
+    const key = keyStdin === '--key-stdin' ? (await readStdin()).trim() : undefined;
+    if (keyStdin === '--key-stdin' && (key === undefined || key === '')) {
+      usage('concept-art save-route --key-stdin reads the key from stdin.');
+    }
+    return (await connect())('conceptArt', {
+      action: 'saveRoute',
+      route: {
+        id: rest[1],
+        protocol: rest[2],
+        credentialRef: rest[3],
+        models: [rest[4]],
+        ...(key === undefined ? {} : { key }),
+      },
+    });
+  }
+  if (action === 'lock-route' && rest.length === 4) {
+    return (await connect())('conceptArt', {
+      action: 'lockRoute',
+      lock: { consumer: rest[1], instanceId: rest[2], model: rest[3] },
+    });
+  }
   if (action === 'open' && rest.length === 2)
     return (await connect())('conceptArt', { action, botSlug: rest[1] });
   if (action === 'styles' && rest.length === 2)
@@ -66,6 +95,6 @@ export async function runConceptArtCommand(
     });
   }
   usage(
-    'concept-art needs status, open <bot>, styles <session>, generate-style <session> <ref>, request, resume <session> <key>, cancel <session> <key>, or accept <session> <key> <context-version>.',
+    'concept-art needs status, routes, save-route <id> <openai-chat|openai-images> <credentialRef> <model> [--key-stdin], lock-route <chat|concept-art> <instanceId> <model>, open <bot>, styles <session>, generate-style <session> <ref>, request, resume <session> <key>, cancel <session> <key>, or accept <session> <key> <context-version>.',
   );
 }

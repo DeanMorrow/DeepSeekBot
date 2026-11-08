@@ -1,6 +1,10 @@
 import type { AttachmentStore } from '../attachments/store.js';
 import type { ConceptArtRequest, createConceptArtConsumer } from './concept-art-consumer.js';
-import { SharedRouteError, type createSharedModelRoute } from './shared-route.js';
+import {
+  SharedRouteError,
+  verifiedApiyiRoute,
+  type createSharedModelRoute,
+} from './shared-route.js';
 
 type Consumer = ReturnType<typeof createConceptArtConsumer>;
 type Route = ReturnType<typeof createSharedModelRoute>;
@@ -63,6 +67,100 @@ export function createConceptArtBridge(input: {
         typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {};
       const action = body['action'];
       try {
+        if (action === 'routes') {
+          const instances = await input.sharedRoute.listInstances();
+          const chat = await input.sharedRoute.describeConsumer('chat', 'chat');
+          const image = await input.sharedRoute.describeConsumer('concept-art', 'image');
+          return {
+            ok: true,
+            value: {
+              protocols: (['openai-chat', 'openai-images'] as const).map((protocol) =>
+                verifiedApiyiRoute(protocol),
+              ),
+              instances,
+              chat,
+              image,
+            },
+          };
+        }
+        if (action === 'saveRoute') {
+          const route = body['route'];
+          if (typeof route !== 'object' || route === null) return invalid('Route is required.');
+          const record = route as Record<string, unknown>;
+          const protocol = record['protocol'];
+          if (protocol !== 'openai-chat' && protocol !== 'openai-images') {
+            return invalid('Choose openai-chat or openai-images. The base URL is fixed.');
+          }
+          if (typeof record['id'] !== 'string' || typeof record['credentialRef'] !== 'string') {
+            return invalid('Instance id and credential reference are required.');
+          }
+          if (
+            !Array.isArray(record['models']) ||
+            record['models'].some((item) => typeof item !== 'string')
+          ) {
+            return invalid('Models must be the names from the provider list.');
+          }
+          const verified = verifiedApiyiRoute(protocol);
+          const key = record['key'];
+          if (key !== undefined && typeof key !== 'string') return invalid('Key must be a string.');
+          const saved = await input.sharedRoute.saveInstance(
+            {
+              id: record['id'],
+              gateway: verified.gateway,
+              vendor: 'apiyi',
+              capability: verified.capability,
+              protocol: verified.protocol,
+              baseUrl: verified.baseUrl,
+              models: record['models'] as string[],
+              credentialRef: record['credentialRef'],
+            },
+            typeof key === 'string' ? key : undefined,
+          );
+          return { ok: true, value: saved };
+        }
+        if (action === 'lockRoute') {
+          const lock = body['lock'];
+          if (typeof lock !== 'object' || lock === null) return invalid('Lock is required.');
+          const record = lock as Record<string, unknown>;
+          const consumer = record['consumer'];
+          const instanceId = record['instanceId'];
+          const model = record['model'];
+          if (
+            (consumer !== 'chat' && consumer !== 'concept-art') ||
+            typeof instanceId !== 'string' ||
+            typeof model !== 'string'
+          ) {
+            return invalid('Choose chat or concept-art, an instance, and a saved model.');
+          }
+          const capability = consumer === 'chat' ? 'chat' : 'image';
+          const instances = await input.sharedRoute.listInstances();
+          const instance = instances.find((item) => item.id === instanceId);
+          if (
+            instance === undefined ||
+            instance.capability !== capability ||
+            !instance.models.includes(model)
+          ) {
+            return {
+              ok: false,
+              error: {
+                code: 'model-not-allowed',
+                message: 'That model is not allowed on this instance.',
+              },
+            };
+          }
+          if (!instance.credentialConfigured) {
+            return {
+              ok: false,
+              error: {
+                code: 'credential-missing',
+                message: 'That credential reference has no key.',
+              },
+            };
+          }
+          input.sharedRoute.lock(consumer, capability, instanceId, model);
+          const current = await input.sharedRoute.describeConsumer(consumer, capability);
+          return { ok: true, value: current };
+        }
         if (action === 'status') {
           const image = await input.sharedRoute.describeConsumer('concept-art', 'image');
           const chat = await input.sharedRoute.describeConsumer('chat', 'chat');

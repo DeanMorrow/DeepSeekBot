@@ -48,6 +48,16 @@ export interface InstanceSpec {
 const APIYI_OPENAI = 'https://api.apiyi.com/v1';
 const APIYI_ROOT = 'https://api.apiyi.com';
 
+export function verifiedApiyiRoute(protocol: Exclude<ModelProtocol, 'official-native'>): {
+  gateway: 'apiyi';
+  protocol: Exclude<ModelProtocol, 'official-native'>;
+  capability: ModelCapability;
+  baseUrl: string;
+} {
+  const verified = APIYI_PROTOCOL[protocol];
+  return { gateway: 'apiyi', protocol, capability: verified.capability, baseUrl: verified.baseUrl };
+}
+
 const APIYI_PROTOCOL: Record<
   Exclude<ModelProtocol, 'official-native'>,
   { capability: ModelCapability; baseUrl: string }

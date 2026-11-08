@@ -1347,6 +1347,9 @@ export class BotharnessBridgeService extends TypertRemoteService {
   conceptArt(
     action:
       | 'status'
+      | 'routes'
+      | 'saveRoute'
+      | 'lockRoute'
       | 'open'
       | 'styles'
       | 'generateStyle'
@@ -1381,6 +1384,14 @@ export class BotharnessBridgeService extends TypertRemoteService {
       botSlug?: string;
       confirmedPrompt?: string;
     },
+    route?: {
+      id: string;
+      protocol: 'openai-chat' | 'openai-images';
+      credentialRef: string;
+      models: string[];
+      key?: string;
+    },
+    lock?: { consumer: 'chat' | 'concept-art'; instanceId: string; model: string },
   ): Promise<unknown> {
     return unwrapAsync(
       this.methods.conceptArt({
@@ -1392,6 +1403,8 @@ export class BotharnessBridgeService extends TypertRemoteService {
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
         ...(contextVersion === undefined ? {} : { contextVersion }),
         ...(request === undefined ? {} : { request }),
+        ...(route === undefined ? {} : { route }),
+        ...(lock === undefined ? {} : { lock }),
       }),
     );
   }
