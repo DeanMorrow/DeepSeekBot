@@ -1192,7 +1192,7 @@ export const zh = {
   'conceptRoute.credentialRef': '凭证引用',
   'conceptRoute.base': '接口基址',
   'conceptRoute.key': '密钥',
-  'conceptRoute.keyKept': '已保存的密钥会继续用，不用再填。',
+  'conceptRoute.keyKept': 'DSH 里已有的凭证引用会直接用，不会再复制一把密钥。',
   'conceptRoute.save': '保存并锁定',
   'conceptRoute.empty': '还没有可锁定的模型。',
   'conceptArt.ready': '可以开始。解析通过也不等于成品图。',
@@ -6053,7 +6053,8 @@ export const en = {
   'conceptRoute.credentialRef': 'Credential reference',
   'conceptRoute.base': 'API base URL',
   'conceptRoute.key': 'Key',
-  'conceptRoute.keyKept': 'The saved key stays in use. Do not enter it again.',
+  'conceptRoute.keyKept':
+    'An existing DSH credential reference is used directly. A second key is not stored.',
   'conceptRoute.save': 'Save and lock',
   'conceptRoute.empty': 'No model is available to lock.',
   'conceptArt.ready': 'Ready to start. A parsed image is not a finished picture.',

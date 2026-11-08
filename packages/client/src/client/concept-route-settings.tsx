@@ -44,6 +44,7 @@ export function ConceptRouteSettings({
   const [modelName, setModelName] = useState('');
   const [credentialRef, setCredentialRef] = useState('');
   const [key, setKey] = useState('');
+  const [askKey, setAskKey] = useState(false);
   const [protocol, setProtocol] = useState<'openai-chat' | 'openai-images'>('openai-chat');
 
   const load = (): void => {
@@ -62,7 +63,7 @@ export function ConceptRouteSettings({
     routes.protocols?.find((item) => item.protocol === protocol)?.baseUrl ??
     'https://api.apiyi.com/v1';
   const selectedRef = instances.find((item) => item.credentialRef === credentialRef.trim());
-  const needsKey = selectedRef?.credentialConfigured !== true;
+  const needsKey = askKey && selectedRef?.credentialConfigured !== true;
 
   const lock = (consumer: 'chat' | 'concept-art', value: string): void => {
     if (conceptArt === undefined || value === '') return;
@@ -106,10 +107,16 @@ export function ConceptRouteSettings({
       )
       .then(() => {
         setKey('');
+        setAskKey(false);
         setModelName('');
         load();
       })
       .catch((error: unknown) => {
+        const code =
+          typeof error === 'object' && error !== null
+            ? (error as { code?: string }).code
+            : undefined;
+        if (code === 'credential-missing') setAskKey(true);
         setNote(error instanceof Error ? error.message : t('conceptRoute.empty'));
       });
   };

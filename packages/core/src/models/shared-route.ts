@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isCredentialRefName } from '@deepseek-ai/dsh-credentials';
 
 import type { OperationalDatabaseModulePort } from '../database/owner.js';
 import { inspectImage } from '../media/image-format.js';
@@ -112,6 +113,12 @@ interface StoredTask {
   artifact: StoredArtifact | null;
   error: string | null;
   remoteCancel: 'unverified';
+}
+
+function acceptedCredentialRef(value: string): string {
+  const text = value.trim();
+  if (isCredentialRefName(text)) return text;
+  return cleanId(text, 'Credential reference');
 }
 
 function cleanId(value: string, label: string): string {
@@ -459,13 +466,22 @@ export function createSharedModelRoute(
         protocol: spec.protocol,
         baseUrl: spec.baseUrl.trim(),
         models: [...new Set(spec.models.map((model) => cleanId(model, 'Model')))],
-        credentialRef: cleanId(spec.credentialRef, 'Credential reference'),
+        credentialRef: acceptedCredentialRef(spec.credentialRef),
         createdAt: now(),
       };
       assertProtocol(stored);
       if (key !== undefined) {
         if (key.trim() === '') throw new SharedRouteError('invalid-input', 'The key is empty.');
-        await secrets.put(stored.credentialRef, key);
+        if (await secrets.configured(stored.credentialRef)) {
+          if ((await secrets.read(stored.credentialRef)) !== key) {
+            throw new SharedRouteError(
+              'credential-already-configured',
+              'That credential reference is already stored. It is reused and not overwritten.',
+            );
+          }
+        } else {
+          await secrets.put(stored.credentialRef, key);
+        }
       } else if (!(await secrets.configured(stored.credentialRef))) {
         throw new SharedRouteError('credential-missing', 'That credential reference has no key.');
       }

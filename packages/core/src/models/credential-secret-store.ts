@@ -1,12 +1,15 @@
 import {
   credentialKey,
+  credentialRef,
   isCredentialKeySegment,
+  isCredentialRefName,
   type CredentialProvider,
 } from '@deepseek-ai/dsh-credentials';
 
 import { SharedRouteError, type SecretStore } from './shared-route.js';
 
-type Credentials = Pick<CredentialProvider, 'readRecord' | 'modifyRecord'>;
+type Credentials = Pick<CredentialProvider, 'readRecord' | 'modifyRecord'> &
+  Partial<Pick<CredentialProvider, 'resolve' | 'describe' | 'set'>>;
 
 const ROUTE_SCOPE = 'botharness-route';
 
@@ -26,6 +29,25 @@ export function createCredentialSecretStore(
   return {
     async put(id, key) {
       const native = credentials();
+      if (isCredentialRefName(id)) {
+        if (native?.describe === undefined || native.set === undefined) {
+          throw new SharedRouteError(
+            'credential-unavailable',
+            'The Host credential service cannot resolve this reference.',
+          );
+        }
+        const ref = credentialRef(id);
+        if ((await native.describe(ref)).configured) {
+          const current = await native.resolve?.(ref);
+          if (current?.value === key) return;
+          throw new SharedRouteError(
+            'credential-already-configured',
+            'That credential reference is already stored. It is reused and not overwritten.',
+          );
+        }
+        await native.set(ref, key);
+        return;
+      }
       const stored = recordKey(id);
       if (native === undefined || key === '') {
         throw new SharedRouteError(
@@ -59,6 +81,11 @@ export function createCredentialSecretStore(
     },
     async read(id) {
       const native = credentials();
+      if (isCredentialRefName(id)) {
+        if (native?.resolve === undefined) return undefined;
+        const resolved = await native.resolve(credentialRef(id));
+        return resolved?.value !== undefined && resolved.value !== '' ? resolved.value : undefined;
+      }
       const stored = recordKey(id);
       if (native === undefined || stored === undefined) return undefined;
       const record = await native.readRecord(stored);
