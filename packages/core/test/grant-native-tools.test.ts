@@ -247,6 +247,55 @@ describe('Orchestrator execution root selection', () => {
   });
 });
 
+describe('Neighboring Memory is not access', () => {
+  it('denies the other Bot even when the folders sit side by side', () => {
+    const f = fixture();
+    const beeMemory = join(dirname(f.memory), 'bee-memory');
+    mkdirSync(beeMemory);
+    writeFileSync(join(beeMemory, 'own.md'), 'bee');
+    writeFileSync(join(f.memory, 'secret.md'), 'ada-secret');
+    writeFileSync(join(f.project, 'lesson.md'), 'desensitized shared lesson');
+    const beeGrant = {
+      orchestratorWrite: false,
+      id: 'bee-grant',
+      botSlug: 'bee',
+      workspaceId: 'project',
+      workspacePath: f.project,
+      workspaceTitle: 'project',
+      createdAt: '2026-01-01T00:00:00Z',
+    };
+    const bee = {
+      ownership: {
+        resolve: (sessionId: string) =>
+          sessionId === 'bee'
+            ? { sessionId, botSlug: 'bee', rootRole: 'orchestrator' as const }
+            : undefined,
+      },
+      registry: { memoryDirFor: () => beeMemory, get: () => ({ slug: 'bee' }) },
+      grants: { list: () => [beeGrant], requireActive: () => beeGrant },
+      runtime: { getAssignment: () => undefined },
+    } as never;
+    const beeSession = { id: 'bee', header: { cwd: beeMemory } } as never;
+
+    expect(f.gate(f.orchestrator, 'read', { file_path: join(beeMemory, 'own.md') })).toMatch(
+      /outside/,
+    );
+    expect(
+      nativeFileToolDenial(bee, beeSession, 'read', { file_path: join(f.memory, 'secret.md') }),
+    ).toMatch(/outside/);
+    expect(
+      nativeFileToolDenial(bee, beeSession, 'read', {
+        file_path: join(f.memory, 'secret.md'),
+        approved: true,
+      }),
+    ).toMatch(/outside/);
+    expect(nativeFileToolDenial(bee, beeSession, 'read', { file_path: 'own.md' })).toBeUndefined();
+    expect(
+      nativeFileToolDenial(bee, beeSession, 'read', { file_path: join(f.project, 'lesson.md') }),
+    ).toBeUndefined();
+  });
+});
+
 describe('Workspace roots under a symlinked parent (#1292)', () => {
   it('accepts Memory and Grant roots whose parent directory is a symlink', () => {
     const f = fixture(true);

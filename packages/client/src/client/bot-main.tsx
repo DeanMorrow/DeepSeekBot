@@ -1127,6 +1127,31 @@ function ConversationView({
     state.selection?.kind === 'bot' && state.selection.inboxRequest ? 'inbox' : undefined,
   );
   const filesOpen = detail === 'files';
+  const conceptPanel =
+    dockPanels?.available() === true &&
+    dockPanels.panels().some((panel) => panel.id === 'concept-art')
+      ? dockPanels
+      : undefined;
+  const conceptExpanded =
+    conceptPanel !== undefined
+      ? conceptPanel.isOpen('concept-art')
+      : sidebar.mode !== 'hidden' && sidebar.isEntryExpanded('concept-art');
+  const toggleConcept = (): void => {
+    if (conceptPanel !== undefined) {
+      if (conceptPanel.canOpen?.('concept-art') === false) {
+        conceptPanel.close('concept-art');
+        return;
+      }
+      conceptPanel.toggle('concept-art');
+      return;
+    }
+    if (sidebar.mode === 'hidden') {
+      sidebar.toggle();
+      if (!sidebar.isEntryExpanded('concept-art')) sidebar.toggleEntry('concept-art');
+      return;
+    }
+    sidebar.toggleEntry('concept-art');
+  };
   const inboxOpen = detail === 'inbox';
   const setFilesOpen = (open: boolean) => setDetail(open ? 'files' : undefined);
   const setInboxOpen = (open: boolean) => setDetail(open ? 'inbox' : undefined);
@@ -2850,6 +2875,20 @@ function ConversationView({
                 </IconButton>
               </span>
             )}
+            {onMobileBack === undefined &&
+              channel?.type === 'dm' &&
+              profileBot !== undefined &&
+              profileBot.deleted !== true && (
+                <span className="bh-channel-island-wrap">
+                  <IconButton
+                    aria-label={t('botSettings.section.conceptArt')}
+                    aria-expanded={conceptExpanded}
+                    onClick={toggleConcept}
+                  >
+                    <ChannelSidebarIcon name="flask-conical" />
+                  </IconButton>
+                </span>
+              )}
             {!workspaceEnabled &&
               onMobileBack === undefined &&
               channel?.type === 'dm' &&
@@ -3642,6 +3681,15 @@ function ConversationView({
                         : {}),
                       actions: (
                         <>
+                          {profileBot !== undefined && profileBot.deleted !== true && (
+                            <IconButton
+                              aria-label={t('botSettings.section.conceptArt')}
+                              aria-expanded={conceptExpanded}
+                              onClick={toggleConcept}
+                            >
+                              <ChannelSidebarIcon name="flask-conical" />
+                            </IconButton>
+                          )}
                           {profileBot !== undefined && profileBot.deleted !== true && (
                             <DmCallControl
                               slug={profileBot.slug}

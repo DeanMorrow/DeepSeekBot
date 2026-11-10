@@ -35,6 +35,7 @@ import { HumanNameSettings } from './human-name-settings.js';
 import { CompactionThresholdSetting } from './compaction-threshold-setting.js';
 import { IdleCompactionSetting } from './idle-compaction-setting.js';
 import { MessagingDefaultsSettings } from './messaging-defaults-settings.js';
+import { ConceptRouteSettings } from './concept-route-settings.js';
 import { DefaultModelSettings, OnboardingSetting } from './onboarding-view.js';
 import { PairedDevicesSettings } from './paired-devices.js';
 import { ProfileBackupSettings } from './profile-backup.js';
@@ -92,6 +93,7 @@ export function ModelsSection(
   return (
     <Rows>
       <DefaultModelSettings actions={props.actions} t={props.t} />
+      <ConceptRouteSettings conceptArt={props.actions.conceptArt} t={props.t} />
       <IdleCompactionSetting call={props.call} t={props.t} />
       <CompactionThresholdSetting call={props.call} t={props.t} />
       <AssignmentConcurrencyRow {...props} />
@@ -207,3 +209,5 @@ export function AboutSection({
     </Rows>
   );
 }
+
+export { ConceptArtSection } from './concept-art-section.js';

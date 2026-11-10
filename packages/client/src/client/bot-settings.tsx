@@ -27,6 +27,7 @@ export const BOT_SETTINGS_SECTIONS = {
   advanced: 'advanced',
   plugins: 'plugins',
   about: 'about',
+  conceptArt: 'concept-art',
 } as const;
 
 export const BOT_SETTINGS_DEFAULT_SECTION = BOT_SETTINGS_SECTIONS.general;
@@ -51,6 +52,7 @@ const SECTION_ICONS: Readonly<Record<string, string>> = {
   [BOT_SETTINGS_SECTIONS.advanced]: 'sliders-horizontal',
   [BOT_SETTINGS_SECTIONS.plugins]: 'puzzle',
   [BOT_SETTINGS_SECTIONS.about]: 'info',
+  [BOT_SETTINGS_SECTIONS.conceptArt]: 'flask-conical',
 };
 
 export function botSettingsSectionIcon(id: string): string {

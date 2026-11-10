@@ -1,0 +1,43 @@
+# 候选包的复现边界
+
+`botharness-profile` 是档案备份的恢复命令，不是 Host 工具入口。它执行 `import { runProfileRestoreCli } from '@botharness/core'`，因此加载 Core 主包 `dist/index.mjs`。主包顶层有：
+
+```js
+import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent';
+```
+
+在 `1.6.1-fork.e6dab320.1` 里，这个包只出现在 devDependencies，peerDependencies 是空的，打包时被去掉，档案的 lock 没有安装它。用裸 Node 跑该 CLI 得到 `ERR_MODULE_NOT_FOUND`。
+
+这不表示 Host 失败。Windows 上的 Host 仍在 `4211`，匿名请求是 401，日志里没有 subagent 错误。DSH `0.2.2-alpha.2` 自己的安装树里有 `@deepseek-ai/dsh-subagent`，插件由 Host 加载时走那棵树。裸 Node 从档案脚本向上找，找不到 DSH 安装树里的包。
+
+`deepseekbot` 走的是 `@botharness/core/cli`。这份 CLI 把 `@deepseek-ai/*` 打进包内，所以 `deepseekbot --help` 能成功，不依赖档案里有没有 `dsh-subagent`。
+
+## 修正包
+
+不要安装 `1.6.1-fork.0e1461c18.1`、`1.6.1-fork.1c6ade932.1`、`1.6.1-fork.a90859f35.1`、`1.6.1-fork.73b920dc3.1`、`1.6.1-fork.d2c1e89ca.1` 或 `1.6.1-fork.450c89282.1`。当前包是 `1.6.1-fork.73d1c1d14.1`，源提交 `73d1c1d14a97b20e5c8e1fe078067ba9ac28eca3`，Core SHA256 `6d32e6b666f8162d6554a515ec774f6c38ff42bfaaeb5aacd4bb3524036a8c41`，锁文件 SHA256 `05b383b7561a7ac285e7ee40dbb6e89929b7dc2876306fb877ad66627328e668`，目录 `tobs-fork-73d1c1d14`。这不是 `73b920dc3`。人类消息正文不能封存。Host 创建可能产生模型费用。真模型和 Windows 未测。前三轮、73b 和 d2 仍未通过。73d 仍是当前安装审核对象，不是产品通过。全局清单源是后加的 Host 能力，配置见 `CATALOG-CONTRACT.zh.md`，不替换这次 73d 安装审核。
+
+实际写入 dependencies 的是 8 个，不只下面曾经点名的 3 个：`dsh-agent`、`dsh-llm`、`dsh-scope`、`dsh-session`、`dsh-subagent`、`dsh-tool-bash`、`dsh-tool-pwsh`、`dsh-tools`。交付目录 `closure/` 有这 8 个 registry tarball，sha512 与 lock 一致。它们不是离线整包。整包 `import '@botharness/core'` 还需要 `@deepseek-ai/cordis@4.0.5`，它现在写在 `@botharness/core` 的 dependencies 里。有网络时安装 core tarball 会拉它。没有网络、又只拿 closure 的 8 个文件，导入仍会 `ERR_MODULE_NOT_FOUND`。正式导出入口是 `readAuthorizedOpsCatalog`，检查脚本是 `node scripts/catalog-source-export-check.mjs`。制作方测试数量不是独立通过。
+
+在独立 DSH `0.2.2-alpha.2` 上，Host 加载 Core 时这 8 个解析到档案里的 `0.2.1-rc.3`，DSH 自己的安装树是 `0.2.2-alpha.2`。`SessionId` 运行时是原字符串，两边 Map 能对上。同一进程的 `bot-sessions` 和 `bot-tool pack_catalog` 都退出码 0。没有会话身份异常，所以没有改解析器。
+
+不要改 DSH 版本，也不要另装 latest。来源提交 `4fb2cc9774ec248b799ce2984c0bce4648bb0726`。Core SHA256：`ce203c63900b889778300243a5b5e836f69a2e43ff372e7940812c745d8ff5b5`。交付目录 `tobs-fork-4fb2cc977`。
+
+## 本包里的可测入口
+
+对这份包的 `node_modules/.bin/deepseekbot help` 和 `tobs help` 运行结果相同，共 315 行。里面有这两行，没有 `pack_catalog` 这个词：
+
+```text
+tobs bot-tools
+tobs bot-tool <id> <tool> [--args-stdin] [--session <assignment-session-id>]
+```
+
+`pack_catalog` 是 `<tool>` 的名字，由正在运行的 Host 通过 `bot-tools` 列出来，不是帮助里的子命令。帮助里的 Live Host 约定是：`--host` 用该 Host 已经在听的 loopback origin，或 `DEEPSEEKBOT_HOST`；令牌用 `DEEPSEEKBOT_HOST_TOKEN` 或 `--token-file`，不要写进参数。当前 Windows Host 的 origin 是 `http://127.0.0.1:4211`。
+
+用本档案里的 `deepseekbot`，不要用 PATH 上另一份旧 `tobs`：
+
+```bash
+deepseekbot bot-tools --host http://127.0.0.1:4211 --token-file <该 Host 启动令牌文件>
+deepseekbot bot-tool <bot-id> pack_catalog --host http://127.0.0.1:4211 --token-file <同一个文件>
+```
+
+隔离 Linux、DSH `0.2.2-alpha.2` 上，后一条对没有模型的 Bot 退出码 0。空白记忆返回 `registry-missing`；放入 seed 清单后 `ok: true`。Windows 上的这条调用还没有做。模型会话里的原生 `skill` 仍未测。

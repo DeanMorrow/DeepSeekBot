@@ -17,6 +17,7 @@ export const BOT_ONLY_CHANNEL_PANELS: readonly string[] = [
   'memory-files',
   'memory-evolution',
   'schedules',
+  'concept-art',
 ];
 
 export const ACTIVITY_CENTER_PANEL = 'activity-center';

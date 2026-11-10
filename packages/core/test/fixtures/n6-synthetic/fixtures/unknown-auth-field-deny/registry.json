@@ -1,0 +1,27 @@
+{
+  "sourceRef": "ops:asset-catalog",
+  "version": 1,
+  "updatedAt": "2026-11-06T00:00:00.000Z",
+  "display": {
+    "audiences": ["profile-owner"]
+  },
+  "inventories": [
+    {
+      "id": "syn-cat-alpha",
+      "brief": "SYNTHETIC visible sibling",
+      "version": 1,
+      "updatedAt": "2026-11-06T00:00:00.000Z",
+      "entry": "categories/syn-cat-alpha.json",
+      "status": "active"
+    },
+    {
+      "id": "syn-cat-deny",
+      "brief": "SYNTHETIC should be hidden by unknown auth field",
+      "version": 1,
+      "updatedAt": "2026-11-06T00:00:00.000Z",
+      "entry": "categories/syn-cat-deny.json",
+      "status": "active",
+      "permissionMode": "synthetic-unknown-auth-field"
+    }
+  ]
+}

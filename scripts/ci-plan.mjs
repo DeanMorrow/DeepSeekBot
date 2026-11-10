@@ -107,6 +107,7 @@ export const RULES = [
   related('.github/workflows/readme-status.yml', 'README status collection and publication'),
   related('docs/assets/readme/pixel/source/**', 'README renderer source geometry and licenses'),
   related('scripts/fixtures/**', 'Script test fixtures'),
+  related('adapters/tobs-thinking/**', 'Installable Tobs thinking seed; a script test imports it'),
   related('scripts/product-provider/**', 'Product provider scripts'),
   related('scripts/perf-budgets/**', 'Performance budgets, checked by the timeline budget job'),
   related('scripts/*', 'Repository scripts'),

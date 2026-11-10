@@ -1344,6 +1344,75 @@ export class BotharnessBridgeService extends TypertRemoteService {
     return unwrap(this.methods.voiceProviders(slug === undefined ? {} : { slug }));
   }
 
+  conceptArt(
+    action:
+      | 'status'
+      | 'routes'
+      | 'accounts'
+      | 'bindAccount'
+      | 'saveRoute'
+      | 'lockRoute'
+      | 'open'
+      | 'styles'
+      | 'generateStyle'
+      | 'request'
+      | 'resume'
+      | 'cancel'
+      | 'accept',
+    sessionId?: string | null,
+    botSlug?: string,
+    styleRef?: string,
+    note?: string,
+    idempotencyKey?: string,
+    contextVersion?: string | number,
+    request?: {
+      raw_requirement: string;
+      submit_prompt?: string;
+      style: {
+        state: 'none' | 'selected' | 'disabled';
+        styleRef?: string | null;
+        version?: string | null;
+        def?: string | null;
+        def_fixture?: string | null;
+      };
+      style_history_audit_only?: { styleRef?: string; def?: string }[];
+      references?: { id: string; status: string }[];
+      sessionId: string | null;
+      context_version: string | number;
+      operation_id: string;
+      route_idempotency_key: string;
+      input_fingerprint: string;
+      submit_allowed: boolean;
+      botSlug?: string;
+      confirmedPrompt?: string;
+    },
+    route?: {
+      id: string;
+      protocol: 'openai-chat' | 'openai-images';
+      credentialRef: string;
+      models: string[];
+      key?: string;
+    },
+    lock?: { consumer: 'chat' | 'concept-art'; instanceId: string; model: string },
+    bind?: { capability: 'chat' | 'image'; provider: string; model: string },
+  ): Promise<unknown> {
+    return unwrapAsync(
+      this.methods.conceptArt({
+        action,
+        ...(sessionId === undefined ? {} : { sessionId }),
+        ...(botSlug === undefined ? {} : { botSlug }),
+        ...(styleRef === undefined ? {} : { styleRef }),
+        ...(note === undefined ? {} : { note }),
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        ...(contextVersion === undefined ? {} : { contextVersion }),
+        ...(request === undefined ? {} : { request }),
+        ...(route === undefined ? {} : { route }),
+        ...(lock === undefined ? {} : { lock }),
+        ...(bind === undefined ? {} : { bind }),
+      }),
+    );
+  }
+
   voiceProviderAdd(
     preset: string,
     name?: string,
@@ -2240,6 +2309,16 @@ export class BotharnessBridgeService extends TypertRemoteService {
     return unwrap(this.methods.botTools({}));
   }
 
+  catalogView(): { catalog: unknown } {
+    this.requirePrivateOwner('Catalog view requires the authenticated Owner');
+    return unwrap(this.methods.catalogView({}));
+  }
+
+  catalogOpen(entryRef: string): { catalog: unknown } {
+    this.requirePrivateOwner('Catalog view requires the authenticated Owner');
+    return unwrap(this.methods.catalogOpen({ entryRef }));
+  }
+
   botToolRun(
     slug: string,
     tool: string,
@@ -2942,6 +3021,8 @@ markRemoteMethods(BotharnessBridgeService.prototype, [
   'botToolTrace',
   'botTools',
   'botToolRun',
+  'catalogView',
+  'catalogOpen',
   'sessionArchiveSet',
   'memoryMove',
   'sessionOwner',
@@ -3000,6 +3081,7 @@ markRemoteMethods(BotharnessBridgeService.prototype, [
   'approvalReviewerModel',
   'approvalReviewerModelSet',
   'voiceProviders',
+  'conceptArt',
   'voiceProviderAdd',
   'voiceProviderRemove',
   'voiceProviderTest',

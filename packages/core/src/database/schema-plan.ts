@@ -2864,6 +2864,208 @@ const VOICE_SETTINGS_MIGRATION: SchemaMigration = {
   },
 };
 
+const SUPER_AGENT_RUN_MIGRATION: SchemaMigration = {
+  generation: 131,
+  module: 'super-agent',
+  description: 'Persist super-agent work orders, run ownership and concurrency slots',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE super_agent_orders (
+        order_id TEXT PRIMARY KEY,
+        bot_slug TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        grant_id TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        steps_json TEXT NOT NULL,
+        acceptance TEXT NOT NULL,
+        sealed_at TEXT NOT NULL
+      );
+      CREATE INDEX super_agent_orders_owner
+        ON super_agent_orders (bot_slug, session_id, grant_id, order_id);
+      CREATE TABLE super_agent_runs (
+        run_id TEXT PRIMARY KEY,
+        bot_slug TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        grant_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        order_ids_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE super_agent_slots (
+        run_id TEXT NOT NULL REFERENCES super_agent_runs(run_id),
+        slot_index INTEGER NOT NULL,
+        bot_slug TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'working', 'stopped', 'settled')),
+        assignment_session_id TEXT,
+        PRIMARY KEY (run_id, slot_index)
+      );
+      CREATE INDEX super_agent_slots_bot_state ON super_agent_slots (bot_slug, state);
+    `);
+  },
+};
+
+const CONCEPT_ART_OPERATION_MIGRATION: SchemaMigration = {
+  generation: 134,
+  module: 'concept-art',
+  description: 'Remember concept-art operation fingerprints without a user project',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE concept_art_operations (
+        session_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        context_version TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        PRIMARY KEY (session_id, idempotency_key)
+      );
+    `);
+  },
+};
+
+const CONCEPT_ART_STYLE_MIGRATION: SchemaMigration = {
+  generation: 135,
+  module: 'concept-art',
+  description: 'Store reusable concept-art style definitions',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE concept_art_styles (
+        style_ref TEXT NOT NULL,
+        version TEXT NOT NULL,
+        def TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (style_ref, version)
+      );
+    `);
+  },
+};
+
+const CONCEPT_ART_STYLE_SCOPE_MIGRATION: SchemaMigration = {
+  generation: 136,
+  module: 'concept-art',
+  description: 'Mark concept-art style ownership without dropping saved definitions',
+  migrate(database) {
+    const names = new Set(
+      (database.prepare('PRAGMA table_info(concept_art_styles)').all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+    if (names.has('ownership')) return;
+    const before = Number(
+      (database.prepare('SELECT COUNT(*) AS n FROM concept_art_styles').get() as { n: number }).n,
+    );
+    database.exec(`
+      CREATE TABLE concept_art_styles_kept (
+        bot_slug TEXT,
+        style_ref TEXT NOT NULL,
+        version TEXT NOT NULL,
+        def TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        ownership TEXT NOT NULL CHECK (ownership IN ('assigned', 'unassigned'))
+      );
+    `);
+    database
+      .prepare(
+        `INSERT INTO concept_art_styles_kept
+           (bot_slug, style_ref, version, def, created_at, ownership)
+         SELECT NULL, style_ref, version, def, created_at, 'unassigned'
+         FROM concept_art_styles`,
+      )
+      .run();
+    const copied = Number(
+      (database.prepare('SELECT COUNT(*) AS n FROM concept_art_styles_kept').get() as { n: number })
+        .n,
+    );
+    if (copied !== before) {
+      throw new Error(`concept_art_styles migration copied ${copied} of ${before} saved styles`);
+    }
+    database.exec(`
+      DROP TABLE concept_art_styles;
+      ALTER TABLE concept_art_styles_kept RENAME TO concept_art_styles;
+      CREATE UNIQUE INDEX concept_art_styles_assigned
+        ON concept_art_styles (bot_slug, style_ref, version)
+        WHERE ownership = 'assigned';
+      CREATE UNIQUE INDEX concept_art_styles_unassigned
+        ON concept_art_styles (style_ref, version)
+        WHERE ownership = 'unassigned';
+    `);
+  },
+};
+
+const CONCEPT_ART_STYLE_OWNERSHIP_MIGRATION: SchemaMigration = {
+  generation: 137,
+  module: 'concept-art',
+  description: 'Record style ownership on databases that already passed generation 136',
+  migrate(database) {
+    const names = new Set(
+      (database.prepare('PRAGMA table_info(concept_art_styles)').all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+    const before = Number(
+      (database.prepare('SELECT COUNT(*) AS n FROM concept_art_styles').get() as { n: number }).n,
+    );
+    if (!names.has('ownership')) {
+      database.exec(
+        "ALTER TABLE concept_art_styles ADD COLUMN ownership TEXT NOT NULL DEFAULT 'unassigned'",
+      );
+      database.exec(
+        `UPDATE concept_art_styles SET ownership = 'assigned' WHERE bot_slug IS NOT NULL`,
+      );
+    }
+    const after = Number(
+      (database.prepare('SELECT COUNT(*) AS n FROM concept_art_styles').get() as { n: number }).n,
+    );
+    if (after !== before) {
+      throw new Error(
+        `concept_art_styles ownership migration changed ${before} rows into ${after}`,
+      );
+    }
+  },
+};
+
+const SHARED_MODEL_MIGRATION: SchemaMigration = {
+  generation: 133,
+  module: 'shared-model',
+  description: 'Persist shared model instances, consumer locks and media task ids',
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE shared_model_instances (
+        id TEXT PRIMARY KEY,
+        body TEXT NOT NULL CHECK (json_valid(body)),
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE shared_model_locks (
+        consumer TEXT NOT NULL,
+        capability TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        PRIMARY KEY (consumer, capability)
+      );
+      CREATE TABLE shared_model_tasks (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        body TEXT NOT NULL CHECK (json_valid(body)),
+        created_at TEXT NOT NULL,
+        UNIQUE (project_id, idempotency_key)
+      );
+    `);
+  },
+};
+
+const SUPER_AGENT_SOURCE_MIGRATION: SchemaMigration = {
+  generation: 132,
+  module: 'super-agent',
+  description: 'Record the host source that authorized each super-agent work order',
+  migrate(database) {
+    database.exec(`
+      ALTER TABLE super_agent_orders ADD COLUMN source_kind TEXT NOT NULL DEFAULT '';
+      ALTER TABLE super_agent_orders ADD COLUMN source_ref TEXT NOT NULL DEFAULT '';
+    `);
+  },
+};
+
 const CHANNEL_CHANGE_LOG_MIGRATION: SchemaMigration = {
   generation: 130,
   module: 'messaging',
@@ -3189,4 +3391,11 @@ export const BOT_HARNESS_SCHEMA_PLAN = defineSchemaPlan([
   VOICE_DEFAULTS_MIGRATION,
   VOICE_SETTINGS_MIGRATION,
   CHANNEL_CHANGE_LOG_MIGRATION,
+  SUPER_AGENT_RUN_MIGRATION,
+  SUPER_AGENT_SOURCE_MIGRATION,
+  SHARED_MODEL_MIGRATION,
+  CONCEPT_ART_OPERATION_MIGRATION,
+  CONCEPT_ART_STYLE_MIGRATION,
+  CONCEPT_ART_STYLE_SCOPE_MIGRATION,
+  CONCEPT_ART_STYLE_OWNERSHIP_MIGRATION,
 ]);

@@ -1,0 +1,25 @@
+{
+  "id": "syn-cat-beta",
+  "registryId": "syn-cat-beta",
+  "version": 1,
+  "updated_at": "2026-11-06T00:00:00.000Z",
+  "updatedAt": "2026-11-06T00:00:00.000Z",
+  "name": "SYNTHETIC Category Beta Entry File",
+  "owner": "synthetic-owner-label",
+  "count": 1,
+  "denominator_definition": "SYNTHETIC denominator definition beta",
+  "items": [
+    {
+      "id": "syn-item-101",
+      "name": "SYNTHETIC Item Beta",
+      "brief": "SYNTHETIC item brief beta",
+      "purpose": "SYNTHETIC item purpose beta",
+      "owner": "synthetic-owner-label",
+      "status": "active",
+      "version": 1,
+      "updated_at": "2026-11-06T00:00:00.000Z",
+      "trigger": "synthetic-trigger-beta",
+      "entry": "synthetic://entries/syn-item-101"
+    }
+  ]
+}

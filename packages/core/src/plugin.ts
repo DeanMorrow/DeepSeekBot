@@ -1,4 +1,9 @@
 import { BotNetworkDeliveryError } from './runtime/bot-network.js';
+import {
+  noteSuperAgentApproval,
+  orchestratorToolScope,
+  sealToolInput,
+} from './runtime/super-agent-authority.js';
 import type { AssignmentReportContent } from './runtime/assignment-report.js';
 import { createWindowZoomControl, WINDOW_ZOOM_CONTROL_PATH } from './window-zoom/control.js';
 import {
@@ -196,7 +201,11 @@ import {
   syncBotDescriptor,
 } from './bots/bot-descriptor-sync.js';
 import { createModelPresetStore, type ModelPresetStore } from './models/presets.js';
+import { readApiyiAccounts } from './models/apiyi-account.js';
 import { createModelCatalog } from './models/catalog.js';
+import { createConceptArtConsumer, conceptArtMediaLimits } from './models/concept-art-consumer.js';
+import { createCredentialSecretStore } from './models/credential-secret-store.js';
+import { createSharedModelRoute } from './models/shared-route.js';
 import { createCredentialReadiness } from './models/credential-readiness.js';
 import { createProviderCredentialHealth } from './models/credential-health.js';
 import { createModelRouteReadiness } from './models/readiness.js';
@@ -545,6 +554,8 @@ export interface BotHarnessCore {
   externalMessaging: OutboundMessaging;
   cloudConnections?: CloudConnections;
   voiceProviders: VoiceProviders;
+  sharedRoute: ReturnType<typeof createSharedModelRoute>;
+  conceptArt: ReturnType<typeof createConceptArtConsumer>;
   voiceMessages: VoiceMessages;
   voiceSpeech: { speak?: Parameters<typeof createVoiceMessages>[0]['speak'] };
   voiceZoom: { zoom?: VoiceCalls['zoom'] | undefined };
@@ -644,6 +655,7 @@ export function createCore(
       | undefined;
     voiceLog?: (phase: string, fields: Record<string, string | number>) => void;
     voiceFetch?: typeof fetch;
+    sharedRouteFetch?: typeof fetch;
   } = {},
 ): BotHarnessCore {
   const dshHome = options.dshHome ?? resolveDshHome();
@@ -1099,6 +1111,18 @@ export function createCore(
     registry,
     ownership,
   });
+  const sharedRoute = createSharedModelRoute(
+    attachOperationalModule(operationalDatabase, 'shared-model'),
+    createCredentialSecretStore(options.credentials ?? (() => undefined)),
+    options.sharedRouteFetch === undefined ? {} : { fetch: options.sharedRouteFetch },
+  );
+  const conceptArt = createConceptArtConsumer({
+    database: attachOperationalModule(operationalDatabase, 'concept-art'),
+    ownership,
+    route: sharedRoute,
+    limits: conceptArtMediaLimits(),
+    describeLock: (consumer, capability) => sharedRoute.describeConsumer(consumer, capability),
+  });
   const voiceProviders = new VoiceProviders({
     database: attachOperationalModule(operationalDatabase, 'voice'),
     credentials: options.credentials ?? (() => undefined),
@@ -1246,6 +1270,8 @@ export function createCore(
   if (operationalDatabase.mode === 'ready') schedules.start();
   return {
     voiceProviders,
+    sharedRoute,
+    conceptArt,
     voiceMessages,
     voiceSpeech,
     voiceZoom,
@@ -1447,6 +1473,10 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
   );
   const turnRefusals = new Map<string, string>();
   ctx.effect(() => () => turnRefusals.clear(), 'botharness: refused Turn reasons');
+  const catalogSession = () => ({
+    sessionOwnerId: createHash('sha256').update(dshHome).digest('hex'),
+    ownedBotSlugs: core.registry.list().map((bot) => bot.slug),
+  });
   const agentAdapter = createDshBotAgentAdapter({
     agents: ctx.agents,
     promptText: (sessionId) => core.prompts.textForSession(sessionId),
@@ -1468,6 +1498,9 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
       return modelReadiness.prepare(slug, role, retainedRoute);
     },
     orchestratorCwd: (bot) => core.registry.memoryDirFor(bot.slug),
+    catalogSourcePath: () => join(dshHome, 'botharness', 'catalog-source.json'),
+    catalogSession,
+    workspaceGrants: (slug) => core.grants.list(slug),
     observePreparation: (slug, sessionId, preparing) => {
       if (!preparing && core.states.snapshot(slug).sessions[sessionId] !== 'thinking') return;
       core.states.setSessionState(
@@ -2234,12 +2267,7 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
         }
         return JSON.stringify(['assignment', cwd, grantId]);
       }
-      const activeIds = core.grants
-        .list(owner.botSlug)
-        .filter((grant) => grant.revokedAt === undefined)
-        .map((grant) => `${grant.id}:${grant.writeRevision ?? 0}`)
-        .sort();
-      return JSON.stringify(['orchestrator', cwd, activeIds]);
+      return orchestratorToolScope(cwd, core.grants.list(owner.botSlug));
     },
     {
       changed: (slug, count) => core.states.setApprovalCount(slug, count),
@@ -2590,6 +2618,24 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
         }
         if (!toolApproval.validAfterDecision(agent, execution.callId))
           return { kind: 'deny', reason: 'Approval rule scope changed' };
+        if (execution.name === 'super_agent_seal' && owner !== undefined) {
+          const args =
+            typeof execution.arguments === 'object' && execution.arguments !== null
+              ? (execution.arguments as Record<string, unknown>)
+              : {};
+          const grantId = typeof args.grant_id === 'string' ? args.grant_id : '';
+          noteSuperAgentApproval({
+            token: String(execution.token),
+            callId: String(execution.callId),
+            botSlug: owner.botSlug,
+            sessionId: agent.session.id,
+            grantId,
+            toolInput: sealToolInput({
+              grant_id: grantId,
+              work_orders: typeof args.work_orders === 'string' ? args.work_orders : '',
+            }),
+          });
+        }
         if (toolApproval.remembered(agent, execution.callId)) rememberedStarts.add(execution.token);
         const guard = toolApproval.executionGuard(agent, execution.callId);
         if (!guard || !guard(execution.name, execution.arguments))
@@ -2845,8 +2891,31 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
     drafts: shareDrafts,
     log: (event) => ctx.logger.info(JSON.stringify(event)),
   });
+  const apiyiAccounts = () =>
+    readApiyiAccounts({
+      providers: ctx.llm.listConfigurableProviders(),
+      settings:
+        (
+          ctx.get('settings') as
+            | { describe(options: { redactSecrets: boolean }): { ns: string; value: unknown }[] }
+            | undefined
+        )?.describe({ redactSecrets: true }) ?? [],
+      configured: async (ref) => {
+        const credentials = ctx.get('credentials') as
+          | { describe(ref: string): Promise<{ configured: boolean }> }
+          | undefined;
+        if (!credentials) throw new Error('Native credentials service is unavailable');
+        return (await credentials.describe(ref)).configured;
+      },
+    });
+  core.conceptArt.useAccounts(apiyiAccounts);
   const bridgeMethods = createBridgeMethods({
+    catalogSourcePath: join(dshHome, 'botharness', 'catalog-source.json'),
+    catalogSession,
     voiceProviders: core.voiceProviders,
+    conceptArt: core.conceptArt,
+    sharedRoute: core.sharedRoute,
+    apiyiAccounts,
     voiceLog: (phase, fields) => diagnosticEvents.record('voice', phase, fields),
     prompts: core.prompts,
     botContext: async (slug) => {

@@ -618,6 +618,10 @@ deepseekbot bot-trace <bot-id> --turns 1
 
 Each turn lists the tools the model called with bounded arguments, the outcome (`ok`, `error`, `denied` when an approval was rejected, `cancelled`, or `pending`), the approval decision when there was one, and the first part of the result. Arguments and results of `secret_cli`, `secret_http`, `protected_cli`, `secret_mcp_connect` and `ask_secret` are never returned. A `denied` call points at the Harness (access or approval); a missing or wrongly argued call points at the model; an `error` from the same tool that also fails in path B points at the Browser or Computer. `--session` reads another of the Bot's Sessions, such as an Assignment.
 
+### Ops catalog
+
+`deepseekbot catalog` calls the live Host method `catalogView` as the authenticated Owner. `deepseekbot catalog-open <entryRef>` calls `catalogOpen`. The Host reads only `$DSH_HOME/botharness/catalog-source.json`. That file points at the official registry. The registry's `display.audiences` decides who may see it. `profile-owner` is this command. `bot:<slug>` uses that Bot's `pack_catalog` and `pack_catalog_open`. `catalog-open` stays the Owner bridge and a Bot cannot call it to become the Owner. `printf '{"entryRef":"ops:asset-catalog#<id>"}' | deepseekbot bot-tool <bot-id> pack_catalog_open --args-stdin` opens item names and briefs for the registered Bot. A missing file is `unreachable`. A registry without `display` is `unauthorized`. Neither result is filled from a Bot memory catalog. `entryRef` is `ops:asset-catalog#<id>`. The reply omits filesystem paths.
+
 ### Harness Bot tools without the model
 
 The Harness tools a Bot uses to talk, read its Inbox and run its Channels and schedules can be called the same way, as that Bot, with no model involved:
@@ -828,6 +832,25 @@ deepseekbot approval-reviewer-model-set bot
 ```
 
 Both commands return `{follows, model}`: `follows` is `bot` (each Bot's own model, `model` is `null`), `model` (the named model is used for every review) or `invalid` (the setting file cannot be read). For a named model they also return `available` and, when it is `false`, `unavailableReason`. A model that is not in the catalog, or whose provider has no working key, is still saved, but every review then posts the ordinary Human card and writes `fallback=model-unavailable` with the reason to `logs.db`; the reviewer never switches to another model on its own. Each review's `approval-review` line in `logs.db` names the `model` and the `reviewSession` it used. When a Bot runs `approval-reviewer-model-set` from its own Shell, the call requires a Human decision or an explicit management-scope saved rule; the model Approval Reviewer cannot answer it. Refusals carry a code: `usage` (no `<provider>/<model>`, or `--effort` with `bot`) and `invalid-input`.
+
+### Concept art
+
+`deepseekbot concept-art` calls the Host bridge method `conceptArt`. The same panel is also registered in the existing Bot sidebar as `concept-art`, in the same entry list as memory and sessions. When that sidebar panel is not mounted, the chat header still opens this panel. `accounts` reads DSH Models-page providers whose base URL is on `https://api.apiyi.com`, plus that provider's `apiKeyEnv` and saved model names. It does not print a key and does not change the Host default model. `bind-account <chat|image> <provider> <model>` hand-selects and locks one name from that list. Chat and image may lock different names, and they share that one credential reference. The list is not a provider check. The DeepSeek official key and a provider whose base is not API易 do not appear here. `routes` lists saved chat and image instances and the current locks. It does not print keys. When the Host can read the DSH Models page, new chat and image configuration uses that API易 account as the source. `save-route` no longer accepts `--key-stdin` to store a new key, and it does not rewrite a model that is not on a current account. Rows already stored stay; they are not deleted. `bind-account` is the new hand selection. Submit checks the provider, exact base URL, protocol, credential reference, and list again, without a network call. `save-route <id> <openai-chat|openai-images> <credentialRef> <model>` updates an existing instance only when that reference, protocol, and model still belong to a current API易 account. A later save of the same reference omits the key and reuses the stored credential. A credential reference in environment-variable form, such as the `apiKeyEnv` already set in DSH model settings, is resolved by the Host credential service and is not copied into `botharness-route`. Sending a key when that reference is already configured is refused and does not overwrite it. `lock-route <chat|concept-art> <instanceId> <model>` switches the lock to a model already on that instance. `status` reports the manual image lock, whether that lock's credential reference is configured, and that the chat model catalog is not this image route. `open <bot>` resolves that Bot's current Host session and does not create a project. `styles <session>` lists style definitions saved for that session's Bot. `generate-style <session> <ref>` reads one style note from stdin, calls the shared chat lock, and stores the definition for that Bot only. `request` reads one JSON object from stdin. `resume` and `cancel` take a session id and the original operation key. `accept <session> <key> <context-version>` reads the stored task. Bytes that parse inside the Host image limits (`MAX_IMAGE_BYTES`, `MAX_IMAGE_PIXELS` from the existing image inspector) return `accept: true` with reason `BYTES_PARSED_NOT_A_RENDER`. `mediaVerified` and `deliverable` stay false: this is not a verified finished picture. The submitted prompt keeps the user's raw text and any selected style definition; a cleared library definition is not appended, and words in the raw text are not deleted. A reference the route cannot carry is blocked. Refusals include `usage` and `invalid-input`.
+
+```bash
+deepseekbot concept-art status
+deepseekbot concept-art routes
+deepseekbot concept-art bind-account <chat|image> <provider> <model>
+deepseekbot concept-art save-route <id> <openai-chat|openai-images> <credentialRef> <model>
+deepseekbot concept-art lock-route <chat|concept-art> <instanceId> <model>
+deepseekbot concept-art open <bot>
+deepseekbot concept-art styles <session>
+deepseekbot concept-art generate-style <session> <ref>
+deepseekbot concept-art request
+deepseekbot concept-art resume <session> <key>
+deepseekbot concept-art cancel <session> <key>
+deepseekbot concept-art accept <session> <key> <context-version>
+```
 
 ### Idle Compaction
 

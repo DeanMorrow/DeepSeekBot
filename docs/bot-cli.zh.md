@@ -9,6 +9,8 @@
 
 ## 用法
 
+`deepseekbot catalog` 通过已认证 Owner 调用 Host 的 `catalogView`。`deepseekbot catalog-open <entryRef>` 调用 `catalogOpen`。Host 只读 `$DSH_HOME/botharness/catalog-source.json` 指向的正式 registry。谁能看由 registry 里的 `display.audiences` 决定：`profile-owner` 对应这条命令。`bot:<slug>` 用那个 Bot 的 `pack_catalog` 和 `pack_catalog_open`。`catalog-open` 仍是 Owner 桥，Bot 不能借它变成 Owner。`printf '{"entryRef":"ops:asset-catalog#<id>"}' | deepseekbot bot-tool <bot-id> pack_catalog_open --args-stdin` 为已登记 Bot 打开条目的名称和简介。没有配置文件是 `unreachable`，没有 `display` 是 `unauthorized`。两种都不会用 Bot 记忆里的清单填上。`entryRef` 是 `ops:asset-catalog#<id>`，响应里没有文件系统路径。
+
 ### 可恢复的 Zip 上传与导入
 
 连接手机使用的同一个已认证 Host，运行 `bot-zip-upload --from-zip <文件> --upload-key <稳定键> --host <地址>`。结果包含 `sha256`、`sizeBytes`、`offset`、`chunkBytes` 和 `expiresAt`。命令通过 `zipUploadBegin` 和 `zipUploadChunk` 上传，使用相同键和文件可继续已确认的分块。每块原始数据为 256 KiB，base64 请求封装后仍小于加密设备通道的 4 MiB 限制。
@@ -799,6 +801,25 @@ deepseekbot approval-reviewer-model-set bot
 ```
 
 两个命令都返回 `{follows, model}`：`follows` 为 `bot`（跟随每个 Bot 自己的模型，`model` 为 `null`）、`model`（所有审批都用指定模型）或 `invalid`（设置文件读不出来）。指定模型时还会返回 `available`，为 `false` 时附带 `unavailableReason`。不在模型目录里、或服务商没有可用密钥的模型仍会保存，但之后每次审批都会改发普通的人类审批卡片，并在 `logs.db` 里写入 `fallback=model-unavailable` 和原因；审批员绝不会自己换用别的模型。`logs.db` 里每条 `approval-review` 记录都写明这次用的 `model` 和 `reviewSession`。Bot 在自己的 Shell 里运行 `approval-reviewer-model-set` 时，这次调用需要人类决定，或在独立管理范围中显式保存的授权规则；模型审批员不能代答。拒绝时带错误码：`usage`（没有 `<provider>/<model>`，或对 `bot` 加了 `--effort`）和 `invalid-input`。
+
+### 概念图
+
+`deepseekbot concept-art` 调用宿主 bridge 方法 `conceptArt`。同一块面板也登记在既有 Bot 侧栏，编号 `concept-art`，和记忆、会话同一份入口表；侧栏面板没有挂上时，对话标题栏仍打开这一块。`accounts` 读取 DSH「模型」页里基址为 `https://api.apiyi.com` 的提供方、它的 `apiKeyEnv` 和已保存的模型名，不打印密钥，也不改 Host 默认模型。`bind-account <chat|image> <provider> <model>` 只从那份名单里手选并锁定；聊天和图像可以锁不同的名字，但共用同一个凭证引用。名单不是供应商核验。DeepSeek 官方密钥和基址不是 API易 的提供方不会出现在这里。`routes` 列出已保存的聊天和图像实例以及当前的锁，不打印密钥。宿主能读到 DSH「模型」页时，新的聊天和图像配置以那份 API易 账户为真源。`save-route` 不再接受 `--key-stdin` 写入新密钥，也不会改写不在当前账户名单上的模型；已有记录保留，不删除。`bind-account` 才是新的手选。提交时会再核对提供方、精确基址、协议、凭证引用和名单，不联网。`save-route <id> <openai-chat|openai-images> <credentialRef> <model>` 只在该引用、协议和模型仍属于当前 API易 账户时更新已有实例。同一引用再次保存时省略密钥，继续用已保存的凭证。环境变量形式的凭证引用，例如 DSH 模型设置里已有的 `apiKeyEnv`，由宿主凭证服务直接解析，不会复制进 `botharness-route`。引用已经配置时再送密钥会被拒绝，不会覆盖。`lock-route <chat|concept-art> <instanceId> <model>` 把锁换到该实例已有的模型。`status` 报告手选的图像锁、该锁的凭证引用是否已配置，以及聊天模型目录不是这条图像路由。`open <bot>` 解析该 Bot 当前的宿主会话，不创建项目。`styles <session>` 只列出这个会话所属 Bot 保存的风格。`generate-style <session> <ref>` 从标准输入读一条风格笔记，调用同一条聊天锁，并只保存给这个 Bot。`request` 从标准输入读一个 JSON。`resume` 和 `cancel` 需要会话号和原来的操作键。`accept <session> <key> <context-version>` 读取已存任务。字节若能在宿主既有图像限额内解析（图像检查器的 `MAX_IMAGE_BYTES` 和 `MAX_IMAGE_PIXELS`），`accept` 为 true，原因是 `BYTES_PARSED_NOT_A_RENDER`。`mediaVerified` 和 `deliverable` 仍是 false：这不是已核验的成品图。提交的提示词保留用户原文和当前选中的风格定义；已停用的库风格定义不会附上，原文里的词也不会被删掉。路由带不了的参考图会被阻断。拒绝码包括 `usage` 和 `invalid-input`。
+
+```bash
+deepseekbot concept-art status
+deepseekbot concept-art routes
+deepseekbot concept-art bind-account <chat|image> <provider> <model>
+deepseekbot concept-art save-route <id> <openai-chat|openai-images> <credentialRef> <model>
+deepseekbot concept-art lock-route <chat|concept-art> <instanceId> <model>
+deepseekbot concept-art open <bot>
+deepseekbot concept-art styles <session>
+deepseekbot concept-art generate-style <session> <ref>
+deepseekbot concept-art request
+deepseekbot concept-art resume <session> <key>
+deepseekbot concept-art cancel <session> <key>
+deepseekbot concept-art accept <session> <key> <context-version>
+```
 
 ### 空闲压缩（Idle Compaction）
 

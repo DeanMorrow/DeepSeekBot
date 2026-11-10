@@ -1062,7 +1062,8 @@ it('routes Sessions through its parent, remembers each Channel and preserves con
     'botharness-browser',
     'botharness-computer',
   ];
-  for (const id of botOnly) registry.registerEntry(entry(id));
+  const botOnlyClosable = [...botOnly, 'concept-art'];
+  for (const id of botOnlyClosable) registry.registerEntry(entry(id));
   const workspace = { rail: () => createElement('nav') };
   const view = (id: string) =>
     createElement(
@@ -1113,7 +1114,7 @@ it('routes Sessions through its parent, remembers each Channel and preserves con
   await settle();
   expect(registry.isOpen('sessions')).toBe(false);
   expect(registry.isOpen(CHANNEL_BODY_PANEL)).toBe(true);
-  for (const id of botOnly) {
+  for (const id of botOnlyClosable) {
     expect(registry.canOpen?.(id)).toBe(true);
     act(() => registry.open(id));
   }
@@ -1121,7 +1122,7 @@ it('routes Sessions through its parent, remembers each Channel and preserves con
   act(() => root.render(view('group')));
   await settle();
   expect(registry.isOpen('sessions')).toBe(true);
-  for (const id of botOnly) {
+  for (const id of botOnlyClosable) {
     expect(registry.canOpen?.(id)).toBe(false);
     act(() => registry.open(id));
     expect(registry.isOpen(id)).toBe(false);

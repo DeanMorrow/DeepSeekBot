@@ -1,0 +1,79 @@
+{
+  "id": "synthetic-ops-asset-catalog",
+  "name": "SYNTHETIC Registry Display Name",
+  "owner": "synthetic-owner-label",
+  "version": "9.9.9-synthetic",
+  "updated_at": "2026-11-06T00:00:00.000Z",
+  "contract": "synthetic-contract-id",
+  "contract_version": "0.0-synthetic",
+  "privacy": {
+    "mode": "synthetic-privacy-mode"
+  },
+  "anti_nesting": {
+    "enabled": true,
+    "note": "synthetic-anti-nesting-placeholder"
+  },
+  "scorecard": {
+    "synthetic_score": 0
+  },
+  "unique_entry_json": 0,
+  "unique_entry_md": 0,
+  "categories": [
+    {
+      "id": "syn-cat-alpha",
+      "name": "SYNTHETIC Category Alpha",
+      "entry": "categories/syn-cat-alpha.json",
+      "status": "active",
+      "version": 1,
+      "updated_at": "2026-11-06T00:00:00.000Z"
+    },
+    {
+      "id": "syn-cat-beta",
+      "name": "SYNTHETIC Category Beta",
+      "entry": "categories/syn-cat-beta.json",
+      "status": "active",
+      "version": 1,
+      "updated_at": "2026-11-06T00:00:00.000Z"
+    }
+  ],
+  "inventories": [
+    {
+      "id": "syn-cat-alpha",
+      "kind": "category",
+      "name": "SYNTHETIC Category Alpha",
+      "purpose": "SYNTHETIC purpose text for alpha \u2014 not real governance",
+      "scope": "synthetic-scope-alpha",
+      "owner": "synthetic-owner-label",
+      "status": "active",
+      "version": 1,
+      "updated_at": "2026-11-06T00:00:00.000Z",
+      "entry": "categories/syn-cat-alpha.json",
+      "machine_entry": "synthetic://machine/entry/alpha",
+      "machine_primary": "synthetic-machine-primary-alpha",
+      "machine_bindings": ["synthetic-binding-a"],
+      "presentation": "synthetic-presentation",
+      "summary": "SYNTHETIC summary alpha",
+      "notes": "SYNTHETIC notes alpha",
+      "brief": "SYNTHETIC brief alpha UI/UX style slash ok"
+    },
+    {
+      "id": "syn-cat-beta",
+      "kind": "category",
+      "name": "SYNTHETIC Category Beta",
+      "purpose": "SYNTHETIC purpose text for beta",
+      "scope": "synthetic-scope-beta",
+      "owner": "synthetic-owner-label",
+      "status": "active",
+      "version": 1,
+      "updated_at": "2026-11-06T00:00:00.000Z",
+      "entry": "categories/syn-cat-beta.json",
+      "machine_entry": "synthetic://machine/entry/beta",
+      "brief": "SYNTHETIC brief beta a/b ratio style"
+    }
+  ],
+  "sourceRef": "ops:asset-catalog",
+  "updatedAt": "2026-11-06T00:00:00.000Z",
+  "display": {
+    "audiences": ["profile-owner"]
+  }
+}
