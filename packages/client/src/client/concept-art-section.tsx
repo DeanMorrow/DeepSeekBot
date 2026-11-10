@@ -19,6 +19,7 @@ type StatusView = {
 
 type Verdict = {
   status?: string;
+  reason?: string;
   reasons?: string[];
   prompt?: string;
   optimization?: string;
@@ -142,6 +143,9 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   const [proposed, setProposed] = useState('');
   const [preview, setPreview] = useState('');
   const confirming = useRef(false);
+  const flight = useRef(0);
+  const pendingKey = useRef<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const leaseId = useRef(0);
   const [held, setHeld] = useState<{
     id: string;
@@ -248,7 +252,11 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   const make = (): void => {
     const id = leaseId.current;
     if (botSlug === undefined || !artLeaseOwns(id)) return;
+    const ticket = flight.current + 1;
+    flight.current = ticket;
     const idempotencyKey = `concept-${raw.length}-${operationKey ?? 'new'}`;
+    pendingKey.current = idempotencyKey;
+    setBusy(true);
     void callConceptArt(call, {
       action: 'request',
       request: {
@@ -267,65 +275,76 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
         input_fingerprint: idempotencyKey,
         submit_allowed: true,
       },
-    }).then((value) => {
-      const verdict = viewOf(value);
-      if (!artLeaseOwns(id)) {
-        if (typeof verdict.idempotencyKey === 'string' && sessionId !== null)
-          void callConceptArt(call, {
-            action: 'cancel',
+    })
+      .then((value) => {
+        const verdict = viewOf(value);
+        if (flight.current !== ticket) return;
+        if (!artLeaseOwns(id)) {
+          if (typeof verdict.idempotencyKey === 'string' && sessionId !== null)
+            void callConceptArt(call, {
+              action: 'cancel',
+              sessionId,
+              idempotencyKey: verdict.idempotencyKey,
+            });
+          return;
+        }
+        setOperationKey(typeof verdict.idempotencyKey === 'string' ? verdict.idempotencyKey : null);
+        if (
+          verdict.status === 'NEEDS_CONFIRMATION' &&
+          typeof verdict.proposedPrompt === 'string' &&
+          typeof verdict.idempotencyKey === 'string' &&
+          sessionId !== null &&
+          botSlug !== undefined
+        ) {
+          const next = {
+            id: verdict.idempotencyKey,
+            text: verdict.proposedPrompt,
+            raw,
+            styleState,
+            picked,
             sessionId,
-            idempotencyKey: verdict.idempotencyKey,
+            botSlug,
+          };
+          setHeld(next);
+          noteArtLease(id, sessionId, verdict.idempotencyKey, () => {
+            void callConceptArt(call, {
+              action: 'cancel',
+              sessionId,
+              idempotencyKey: verdict.idempotencyKey as string,
+            });
           });
-        return;
-      }
-      setOperationKey(typeof verdict.idempotencyKey === 'string' ? verdict.idempotencyKey : null);
-      if (
-        verdict.status === 'NEEDS_CONFIRMATION' &&
-        typeof verdict.proposedPrompt === 'string' &&
-        typeof verdict.idempotencyKey === 'string' &&
-        sessionId !== null &&
-        botSlug !== undefined
-      ) {
-        const next = {
-          id: verdict.idempotencyKey,
-          text: verdict.proposedPrompt,
-          raw,
-          styleState,
-          picked,
-          sessionId,
-          botSlug,
-        };
-        setHeld(next);
-        noteArtLease(id, sessionId, verdict.idempotencyKey, () => {
-          void callConceptArt(call, {
-            action: 'cancel',
-            sessionId,
-            idempotencyKey: verdict.idempotencyKey as string,
-          });
-        });
-        setProposed(verdict.proposedPrompt);
-      } else {
-        setHeld(null);
-        setProposed('');
-      }
-      setPreview(
-        verdict.userVisible === true && typeof verdict.preview === 'string' ? verdict.preview : '',
-      );
-      setOutcome(
-        [
-          verdict.status ?? '',
-          ...(verdict.reasons ?? []),
-          verdict.rawRequirement ? `raw:${verdict.rawRequirement}` : '',
-          verdict.modelPrompt ? `model:${verdict.modelPrompt}` : '',
-          verdict.prompt ?? '',
-          verdict.optimization ?? '',
-          verdict.deliverable === false ? 'deliverable:false' : '',
-          verdict.mediaVerified === false ? 'mediaVerified:false' : '',
-        ]
-          .filter((item) => item !== '')
-          .join('\n'),
-      );
-    });
+          setProposed(verdict.proposedPrompt);
+        } else {
+          setHeld(null);
+          setProposed('');
+        }
+        setPreview(
+          verdict.userVisible === true && typeof verdict.preview === 'string'
+            ? verdict.preview
+            : '',
+        );
+        setOutcome(
+          [
+            verdict.status ?? '',
+            ...(verdict.reasons ?? []),
+            verdict.rawRequirement ? `raw:${verdict.rawRequirement}` : '',
+            verdict.modelPrompt ? `model:${verdict.modelPrompt}` : '',
+            verdict.prompt ?? '',
+            verdict.optimization ?? '',
+            verdict.deliverable === false ? 'deliverable:false' : '',
+            verdict.mediaVerified === false ? 'mediaVerified:false' : '',
+          ]
+            .filter((item) => item !== '')
+            .join('\n'),
+        );
+      })
+      .catch((error: unknown) => {
+        if (flight.current !== ticket) return;
+        setOutcome(error instanceof Error ? error.message : t('conceptArt.notReady'));
+      })
+      .finally(() => {
+        if (flight.current === ticket) setBusy(false);
+      });
   };
 
   const confirm = (): void => {
@@ -379,17 +398,22 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
       .then((value) => {
         const verdict = viewOf(value);
         if (!artLeaseOwns(id)) return;
-        noteArtLease(id, null, null, () => undefined);
-        setProposed('');
-        setHeld(null);
-        setPreview(
+        const shown =
           verdict.userVisible === true && typeof verdict.preview === 'string'
             ? verdict.preview
-            : '',
-        );
+            : '';
+        if (shown === '' && verdict.reason !== undefined && verdict.reason !== '') {
+          setPreview('');
+        } else {
+          noteArtLease(id, null, null, () => undefined);
+          setProposed('');
+          setHeld(null);
+          setPreview(shown);
+        }
         setOutcome(
           [
             verdict.status ?? '',
+            verdict.reason ?? '',
             verdict.fidelity ?? '',
             verdict.promptSource ?? '',
             verdict.quality ?? '',
@@ -408,11 +432,16 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   };
 
   const cancel = (): void => {
-    if (operationKey === null) return;
+    const key = operationKey ?? pendingKey.current;
+    if (key === null) return;
+    flight.current += 1;
+    pendingKey.current = null;
+    setBusy(false);
+    setPreview('');
     void callConceptArt(call, {
       action: 'cancel',
       sessionId: sessionId ?? '',
-      idempotencyKey: operationKey,
+      idempotencyKey: key,
     }).then((value) => {
       const verdict = viewOf(value);
       setPreview('');
@@ -511,7 +540,7 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
                 <button
                   type="button"
                   {...stylex.props(panel.button)}
-                  disabled={operationKey === null}
+                  disabled={operationKey === null && !busy}
                   onClick={cancel}
                 >
                   {t('conceptArt.cancel')}

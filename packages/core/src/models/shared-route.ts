@@ -689,13 +689,14 @@ export function createSharedModelRoute(
         method: 'POST',
         body: JSON.stringify(body),
       });
-      if (response.status === 0 || response.json === undefined) return task;
+      if (response.status === 0) return task;
       if (response.status !== 200) {
         task.status = 'failed';
         task.error = 'provider-rejected';
         saveTask(task);
         return task;
       }
+      if (response.json === undefined) return task;
       const artifact = interpret(instance.protocol, response.json, response.text);
       task.artifact = artifact;
       if (artifact.kind === 'raw-provider-response') {

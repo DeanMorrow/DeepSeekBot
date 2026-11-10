@@ -74,6 +74,7 @@ export interface ConceptArtVerdict {
 }
 
 type RouteTask = {
+  id?: string;
   status: string;
   localStop?: boolean;
   remoteTaskId: string | null;
@@ -556,32 +557,57 @@ export function createConceptArtConsumer(input: {
           markProposal(bound.projectId, proposalId, 'cancelled');
           return refused('BLOCKED', ['LOCAL_STOP'], 0);
         }
-        if (existingTask !== undefined) {
-          return {
-            status: 'ALLOWED',
-            reasons: [],
-            submitCalls: 0,
-            rawRequirement: raw,
-            modelPrompt: row.prompt,
-            rawEchoMatched: row.prompt.includes(raw),
-            fidelity: 'user-accepted-unverified',
-            optimization: 'chat-model',
-            promptSource: 'user-accepted-model-addition',
-            projectId: bound.projectId,
-            idempotencyKey: proposalId,
-            prompt: row.prompt,
-            task: existingTask,
-          };
-        }
+        const replay = (task: RouteTask, calls: number) => ({
+          status: 'ALLOWED' as const,
+          reasons: [],
+          submitCalls: calls,
+          rawRequirement: raw,
+          modelPrompt: row.prompt,
+          rawEchoMatched: row.prompt.includes(raw),
+          fidelity: 'user-accepted-unverified' as const,
+          optimization: 'chat-model' as const,
+          promptSource: 'user-accepted-model-addition' as const,
+          projectId: bound.projectId,
+          idempotencyKey: proposalId,
+          prompt: row.prompt,
+          task,
+        });
+        if (existingTask !== undefined && existingTask.status !== 'failed')
+          return replay(existingTask, 0);
         let task: RouteTask;
         try {
-          task = await wrapped.submit(
-            'concept-art',
-            'image',
-            bound.projectId,
-            proposalId,
-            row.prompt,
-          );
+          const failed = existingTask?.status === 'failed' ? existingTask : undefined;
+          const retryKey =
+            failed === undefined
+              ? proposalId
+              : `${proposalId}:retry:${failed.id ?? failed.idempotencyKey}`;
+          const prior =
+            failed === undefined
+              ? undefined
+              : await wrapped.resume(bound.projectId, retryKey).catch(() => undefined);
+          const submitKey =
+            prior?.status === 'failed'
+              ? `${proposalId}:retry:${prior.id ?? prior.idempotencyKey}`
+              : retryKey;
+          if (prior === undefined || prior.status === 'failed') {
+            if (submitKey !== proposalId) {
+              rememberProposal(
+                bound.projectId,
+                submitKey,
+                String(request.context_version),
+                row.prompt,
+              );
+            }
+            task = await wrapped.submit(
+              'concept-art',
+              'image',
+              bound.projectId,
+              submitKey,
+              row.prompt,
+            );
+          } else {
+            task = prior;
+          }
         } catch (error) {
           if (
             error instanceof SharedRouteError &&

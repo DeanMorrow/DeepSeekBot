@@ -18,6 +18,60 @@ function invalid(message: string): BridgeResult<never> {
   return { ok: false, error: { code: 'invalid-input', message } };
 }
 
+async function presentParsedImage(
+  input: { conceptArt?: Consumer; attachments?: AttachmentStore },
+  task: Parameters<Consumer['accept']>[0],
+  contextVersion: string | number,
+): Promise<Record<string, unknown>> {
+  if (input.conceptArt === undefined) return { delivery: 'not-mounted', mediaVerified: false };
+  const verdict = input.conceptArt.accept(task, contextVersion);
+  if (
+    !verdict.accept ||
+    task.localStop === true ||
+    task.artifact?.kind !== 'base64' ||
+    task.artifact.value === undefined ||
+    input.attachments === undefined
+  ) {
+    return { ...verdict, delivery: 'not-mounted', mediaVerified: false };
+  }
+  const bytes = Buffer.from(task.artifact.value, 'base64');
+  const ref = await input.attachments.upload({
+    data: (async function* () {
+      yield bytes;
+    })(),
+    name: 'concept-art.png',
+  });
+  const saved = input.attachments.current(ref);
+  if (saved.size !== bytes.length || saved.fileId === undefined) {
+    return { ...verdict, delivery: 'not-mounted', userVisible: false, mediaVerified: false };
+  }
+  const downloaded = await input.attachments.download(saved.fileId, saved.name);
+  const chunks: Uint8Array[] = [];
+  const reader = downloaded.body.getReader();
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    if (chunk.value !== undefined) chunks.push(chunk.value);
+  }
+  const stored = Buffer.concat(chunks);
+  if (!stored.equals(bytes)) {
+    return { ...verdict, delivery: 'not-mounted', userVisible: false, mediaVerified: false };
+  }
+  return {
+    ...verdict,
+    parsed: true,
+    deliverable: true,
+    userVisible: true,
+    mediaVerified: false,
+    quality: 'unverified',
+    reason: 'BYTES_PARSED_NOT_A_RENDER',
+    delivery: 'mounted-unverified',
+    imageSource: 'attachment-readback',
+    file: { fileId: saved.fileId, name: saved.name, size: saved.size },
+    preview: stored.toString('base64'),
+  };
+}
+
 function failed(error: unknown): BridgeResult<unknown> {
   if (error instanceof SharedRouteError) {
     return { ok: false, error: { code: error.reason, message: error.message } };
@@ -379,7 +433,14 @@ export function createConceptArtBridge(input: {
         if (action === 'request') {
           const request = requestBody(body['request']);
           if (request === undefined) return invalid('Concept art request is incomplete.');
-          return { ok: true, value: await input.conceptArt.request(request) };
+          const value = await input.conceptArt.request(request);
+          const task =
+            typeof value === 'object' && value !== null && 'task' in value
+              ? (value as { task?: Parameters<Consumer['accept']>[0] }).task
+              : undefined;
+          if (task === undefined) return { ok: true, value };
+          const presented = await presentParsedImage(input, task, request.context_version);
+          return { ok: true, value: { ...value, ...presented } };
         }
         if (action === 'resume' || action === 'cancel') {
           if (typeof body['sessionId'] !== 'string' || typeof body['idempotencyKey'] !== 'string')
@@ -402,73 +463,9 @@ export function createConceptArtBridge(input: {
           if ('status' in project)
             return { ok: true, value: { ...project, optimization: 'not-performed' } };
           const task = input.sharedRoute.read(project.projectId, body['idempotencyKey']);
-          const verdict = input.conceptArt.accept(task, body['contextVersion'] as string | number);
-          if (
-            !verdict.accept ||
-            task.localStop === true ||
-            task.artifact?.kind !== 'base64' ||
-            task.artifact.value === undefined ||
-            input.attachments === undefined
-          ) {
-            return {
-              ok: true,
-              value: { ...verdict, delivery: 'not-mounted', mediaVerified: false },
-            };
-          }
-          const bytes = Buffer.from(task.artifact.value, 'base64');
-          const ref = await input.attachments.upload({
-            data: (async function* () {
-              yield bytes;
-            })(),
-            name: 'concept-art.png',
-          });
-          const saved = input.attachments.current(ref);
-          if (saved.size !== bytes.length || saved.fileId === undefined) {
-            return {
-              ok: true,
-              value: {
-                ...verdict,
-                delivery: 'not-mounted',
-                userVisible: false,
-                mediaVerified: false,
-              },
-            };
-          }
-          const downloaded = await input.attachments.download(saved.fileId, saved.name);
-          const chunks: Uint8Array[] = [];
-          const reader = downloaded.body.getReader();
-          while (true) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            if (chunk.value !== undefined) chunks.push(chunk.value);
-          }
-          const stored = Buffer.concat(chunks);
-          if (!stored.equals(bytes)) {
-            return {
-              ok: true,
-              value: {
-                ...verdict,
-                delivery: 'not-mounted',
-                userVisible: false,
-                mediaVerified: false,
-              },
-            };
-          }
           return {
             ok: true,
-            value: {
-              ...verdict,
-              parsed: true,
-              deliverable: true,
-              userVisible: true,
-              mediaVerified: false,
-              quality: 'unverified',
-              reason: 'BYTES_PARSED_NOT_A_RENDER',
-              delivery: 'mounted-unverified',
-              imageSource: 'attachment-readback',
-              file: { fileId: saved.fileId, name: saved.name, size: saved.size },
-              preview: stored.toString('base64'),
-            },
+            value: await presentParsedImage(input, task, body['contextVersion'] as string | number),
           };
         }
         return invalid('Concept art action is not status, request, resume, cancel or accept.');
