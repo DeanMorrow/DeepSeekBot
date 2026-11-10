@@ -4,26 +4,24 @@ import type { BridgeActions } from './actions.js';
 import type { BotHarnessTranslate } from './locale.js';
 import { SettingsRow, SettingsSection } from './ds/settings-row.js';
 
-type InstanceView = {
-  id: string;
-  capability: 'chat' | 'image' | 'video';
-  protocol: string;
-  baseUrl: string;
-  models: string[];
+type AccountView = {
+  provider: string;
+  displayName: string;
   credentialRef: string;
   credentialConfigured: boolean;
+  models: string[];
+  chatProtocol: 'openai-chat' | 'anthropic-messages' | null;
+  baseUrl: string;
 };
 
 type LockView = {
   locked?: boolean;
-  providerId?: string | null;
   model?: string | null;
   credentialConfigured?: boolean;
 };
 
 type RoutesView = {
-  protocols?: { protocol: string; baseUrl: string; capability: string }[];
-  instances?: InstanceView[];
+  accounts?: AccountView[];
   chat?: LockView;
   image?: LockView;
 };
@@ -40,38 +38,34 @@ export function ConceptRouteSettings({
   t: BotHarnessTranslate;
 }): ReactElement {
   const [routes, setRoutes] = useState<RoutesView>({});
+  const [provider, setProvider] = useState('');
   const [note, setNote] = useState('');
-  const [modelName, setModelName] = useState('');
-  const [credentialRef, setCredentialRef] = useState('');
-  const [key, setKey] = useState('');
-  const [askKey, setAskKey] = useState(false);
-  const [protocol, setProtocol] = useState<'openai-chat' | 'openai-images'>('openai-chat');
 
   const load = (): void => {
     if (conceptArt === undefined) return;
-    void conceptArt({ action: 'routes' }).then((value) => setRoutes(viewOf(value)));
+    void conceptArt({ action: 'routes' }).then((value) => {
+      const next = viewOf(value);
+      setRoutes(next);
+      const accounts = next.accounts ?? [];
+      setProvider((current) =>
+        accounts.some((item) => item.provider === current)
+          ? current
+          : (accounts[0]?.provider ?? ''),
+      );
+    });
   };
 
   useEffect(() => {
     load();
   }, [conceptArt]);
 
-  const instances = routes.instances ?? [];
-  const chatInstances = instances.filter((item) => item.capability === 'chat');
-  const imageInstances = instances.filter((item) => item.capability === 'image');
-  const base =
-    routes.protocols?.find((item) => item.protocol === protocol)?.baseUrl ??
-    'https://api.apiyi.com/v1';
-  const selectedRef = instances.find((item) => item.credentialRef === credentialRef.trim());
-  const needsKey = askKey && selectedRef?.credentialConfigured !== true;
-
-  const lock = (consumer: 'chat' | 'concept-art', value: string): void => {
-    if (conceptArt === undefined || value === '') return;
-    const [instanceId, model] = value.split('\n');
-    if (instanceId === undefined || model === undefined) return;
+  const accounts = routes.accounts ?? [];
+  const account = accounts.find((item) => item.provider === provider);
+  const bind = (capability: 'chat' | 'image', model: string): void => {
+    if (conceptArt === undefined || account === undefined || model === '') return;
     void conceptArt({
-      action: 'lockRoute',
-      lock: { consumer, instanceId, model },
+      action: 'bindAccount',
+      bind: { capability, provider: account.provider, model },
     })
       .then(() => {
         setNote('');
@@ -82,80 +76,59 @@ export function ConceptRouteSettings({
       });
   };
 
-  const save = (): void => {
-    if (conceptArt === undefined) return;
-    if (modelName.trim() === '' || credentialRef.trim() === '') {
-      setNote(t('conceptRoute.needFields'));
-      return;
-    }
-    const id = `${protocol}-${credentialRef.trim()}`;
-    const model = modelName.trim();
-    void conceptArt({
-      action: 'saveRoute',
-      route: {
-        id,
-        protocol,
-        credentialRef: credentialRef.trim(),
-        models: [model],
-        ...(needsKey ? { key } : {}),
-      },
-    })
-      .then((saved) => {
-        const savedId =
-          typeof saved === 'object' &&
-          saved !== null &&
-          'id' in saved &&
-          typeof saved.id === 'string'
-            ? saved.id
-            : id;
-        return conceptArt({
-          action: 'lockRoute',
-          lock: {
-            consumer: protocol === 'openai-chat' ? 'chat' : 'concept-art',
-            instanceId: savedId,
-            model,
-          },
-        });
-      })
-      .then(() => {
-        setKey('');
-        setAskKey(false);
-        setModelName('');
-        load();
-      })
-      .catch((error: unknown) => {
-        const code =
-          typeof error === 'object' && error !== null
-            ? (error as { code?: string }).code
-            : undefined;
-        if (code === 'credential-missing') setAskKey(true);
-        setNote(error instanceof Error ? error.message : t('conceptRoute.empty'));
-      });
-  };
+  if (accounts.length === 0) {
+    return (
+      <SettingsSection>
+        <SettingsRow
+          title={t('conceptRoute.account')}
+          description={t('conceptRoute.needAccount')}
+        />
+        <SettingsRow
+          title={t('conceptRoute.modelName')}
+          description={t('conceptRoute.allowlist')}
+        />
+      </SettingsSection>
+    );
+  }
 
   return (
     <SettingsSection>
+      <SettingsRow title={t('conceptRoute.account')} description={t('conceptRoute.sameRef')}>
+        {accounts.length === 1 ? (
+          <span>{account?.displayName ?? account?.provider}</span>
+        ) : (
+          <select
+            aria-label={t('conceptRoute.account')}
+            value={provider}
+            onChange={(event) => setProvider(event.target.value)}
+          >
+            {accounts.map((item) => (
+              <option key={item.provider} value={item.provider}>
+                {item.displayName || item.provider}
+              </option>
+            ))}
+          </select>
+        )}
+      </SettingsRow>
+      <SettingsRow title={t('conceptRoute.credentialRef')} description={t('conceptRoute.keyKept')}>
+        <span>{account?.credentialRef || t('conceptRoute.empty')}</span>
+      </SettingsRow>
       <SettingsRow
         title={t('conceptRoute.chat')}
         description={routes.chat?.model ?? t('conceptRoute.empty')}
       >
         <select
           aria-label={t('conceptRoute.chat')}
-          value={
-            routes.chat?.providerId && routes.chat.model
-              ? `${routes.chat.providerId}\n${routes.chat.model}`
-              : ''
-          }
-          onChange={(event) => lock('chat', event.target.value)}
+          value={routes.chat?.model ?? ''}
+          disabled={account?.chatProtocol == null}
+          onChange={(event) => bind('chat', event.target.value)}
         >
           <option value="">{t('conceptRoute.empty')}</option>
-          {chatInstances.flatMap((item) =>
-            item.models.map((model) => (
-              <option key={`${item.id}-${model}`} value={`${item.id}\n${model}`}>
-                {model}
-              </option>
-            )),
-          )}
+          {(account?.models ?? []).map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
         </select>
       </SettingsRow>
       <SettingsRow
@@ -164,62 +137,21 @@ export function ConceptRouteSettings({
       >
         <select
           aria-label={t('conceptRoute.image')}
-          value={
-            routes.image?.providerId && routes.image.model
-              ? `${routes.image.providerId}\n${routes.image.model}`
-              : ''
-          }
-          onChange={(event) => lock('concept-art', event.target.value)}
+          value={routes.image?.model ?? ''}
+          onChange={(event) => bind('image', event.target.value)}
         >
           <option value="">{t('conceptRoute.empty')}</option>
-          {imageInstances.flatMap((item) =>
-            item.models.map((model) => (
-              <option key={`${item.id}-${model}`} value={`${item.id}\n${model}`}>
-                {model}
-              </option>
-            )),
-          )}
+          {(account?.models ?? []).map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
         </select>
       </SettingsRow>
-      <SettingsRow title={t('conceptRoute.base')} description={base}>
-        <select
-          aria-label={t('conceptRoute.base')}
-          value={protocol}
-          onChange={(event) => setProtocol(event.target.value as 'openai-chat' | 'openai-images')}
-        >
-          <option value="openai-chat">openai-chat</option>
-          <option value="openai-images">openai-images</option>
-        </select>
-      </SettingsRow>
-      <SettingsRow title={t('conceptRoute.credentialRef')} description={t('conceptRoute.keyKept')}>
-        <input
-          aria-label={t('conceptRoute.credentialRef')}
-          value={credentialRef}
-          onChange={(event) => setCredentialRef(event.target.value)}
-        />
-      </SettingsRow>
-      <SettingsRow title={t('conceptRoute.modelName')} description={t('conceptRoute.allowlist')}>
-        <input
-          aria-label={t('conceptRoute.modelName')}
-          value={modelName}
-          onChange={(event) => setModelName(event.target.value)}
-        />
-      </SettingsRow>
-      {needsKey ? (
-        <SettingsRow title={t('conceptRoute.key')}>
-          <input
-            aria-label={t('conceptRoute.key')}
-            type="password"
-            value={key}
-            onChange={(event) => setKey(event.target.value)}
-          />
-        </SettingsRow>
-      ) : null}
-      <SettingsRow title={t('conceptRoute.save')} description={note}>
-        <button type="button" onClick={save}>
-          {t('conceptRoute.save')}
-        </button>
-      </SettingsRow>
+      <SettingsRow
+        title={t('conceptRoute.modelName')}
+        description={note || t('conceptRoute.allowlist')}
+      />
     </SettingsSection>
   );
 }

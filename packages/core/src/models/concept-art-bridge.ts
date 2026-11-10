@@ -1,5 +1,6 @@
 import type { AttachmentStore } from '../attachments/store.js';
 import type { ConceptArtRequest, createConceptArtConsumer } from './concept-art-consumer.js';
+import { selectApiyiBinding, type ApiyiAccount } from './apiyi-account.js';
 import {
   SharedRouteError,
   verifiedApiyiRoute,
@@ -54,6 +55,8 @@ export function createConceptArtBridge(input: {
   sharedRoute?: Route;
   attachments?: AttachmentStore;
   sessionForBot?: (botSlug: string) => string | null;
+  /** Live DSH Models-page accounts. Concept art does not write this store or the Host default. */
+  apiyiAccounts?: () => Promise<ApiyiAccount[]>;
 }) {
   return {
     async conceptArt(payload: unknown): Promise<BridgeResult<unknown>> {
@@ -71,15 +74,84 @@ export function createConceptArtBridge(input: {
           const instances = await input.sharedRoute.listInstances();
           const chat = await input.sharedRoute.describeConsumer('chat', 'chat');
           const image = await input.sharedRoute.describeConsumer('concept-art', 'image');
+          const accounts = input.apiyiAccounts === undefined ? [] : await input.apiyiAccounts();
           return {
             ok: true,
             value: {
-              protocols: (['openai-chat', 'openai-images'] as const).map((protocol) =>
-                verifiedApiyiRoute(protocol),
+              protocols: (['openai-chat', 'openai-images', 'anthropic-messages'] as const).map(
+                (protocol) => verifiedApiyiRoute(protocol),
               ),
               instances,
+              accounts,
               chat,
               image,
+              hostDefault: 'unchanged',
+              allowlist: 'user-entered-not-provider-checked',
+            },
+          };
+        }
+        if (action === 'accounts') {
+          return {
+            ok: true,
+            value: {
+              accounts: input.apiyiAccounts === undefined ? [] : await input.apiyiAccounts(),
+              allowlist: 'user-entered-not-provider-checked',
+              hostDefault: 'unchanged',
+            },
+          };
+        }
+        if (action === 'bindAccount') {
+          if (input.apiyiAccounts === undefined) {
+            return {
+              ok: false,
+              error: {
+                code: 'unavailable',
+                message: 'The DSH model directory is not available on this Host.',
+              },
+            };
+          }
+          const bind = body['bind'];
+          if (typeof bind !== 'object' || bind === null)
+            return invalid('Account binding is required.');
+          const record = bind as Record<string, unknown>;
+          const capability = record['capability'];
+          if (
+            (capability !== 'chat' && capability !== 'image') ||
+            typeof record['provider'] !== 'string' ||
+            typeof record['model'] !== 'string'
+          ) {
+            return invalid(
+              'Choose chat or image, the Models-page provider, and one of its models.',
+            );
+          }
+          if ('key' in record) {
+            return invalid(
+              'The key stays on the DSH Models page. This binding does not accept one.',
+            );
+          }
+          const binding = selectApiyiBinding(await input.apiyiAccounts(), {
+            provider: record['provider'],
+            model: record['model'],
+            capability,
+          });
+          const verified = verifiedApiyiRoute(binding.protocol);
+          const saved = await input.sharedRoute.saveInstance({
+            id: binding.instanceId,
+            gateway: verified.gateway,
+            vendor: 'apiyi',
+            capability: verified.capability,
+            protocol: verified.protocol,
+            baseUrl: verified.baseUrl,
+            models: binding.account.models,
+            credentialRef: binding.account.credentialRef,
+          });
+          input.sharedRoute.lock(binding.consumer, binding.capability, saved.id, binding.model);
+          return {
+            ok: true,
+            value: {
+              saved,
+              lock: await input.sharedRoute.describeConsumer(binding.consumer, binding.capability),
+              hostDefault: 'unchanged',
             },
           };
         }

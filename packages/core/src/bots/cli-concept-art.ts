@@ -6,7 +6,7 @@ export const CONCEPT_ART_COMMANDS = [
   {
     command: 'concept-art',
     description:
-      'call the Host concept-art bridge: status, routes, save-route, lock-route, styles, generate-style, request (JSON on stdin), resume, cancel, or accept. A key is read from stdin only for save-route when the credential is not already stored.',
+      'call the Host concept-art bridge: status, routes, accounts, bind-account, save-route, lock-route, styles, generate-style, request (JSON on stdin), resume, cancel, or accept. bind-account uses the DSH Models-page credential reference and does not take a key. A key is read from stdin only for save-route when that separate reference is not already stored.',
   },
 ] as const;
 
@@ -27,6 +27,18 @@ export async function runConceptArtCommand(
   const action = rest[0];
   if (action === 'status' && rest.length === 1) return (await connect())('conceptArt', { action });
   if (action === 'routes' && rest.length === 1) return (await connect())('conceptArt', { action });
+  if (action === 'accounts' && rest.length === 1)
+    return (await connect())('conceptArt', { action });
+  if (action === 'bind-account' && rest.length === 4) {
+    const capability = rest[1];
+    if (capability !== 'chat' && capability !== 'image') {
+      usage('concept-art bind-account needs chat or image, then the provider and model.');
+    }
+    return (await connect())('conceptArt', {
+      action: 'bindAccount',
+      bind: { capability, provider: rest[2], model: rest[3] },
+    });
+  }
   if (action === 'save-route' && (rest.length === 5 || rest.length === 6)) {
     const keyStdin = rest[5];
     if (keyStdin !== undefined && keyStdin !== '--key-stdin') {
@@ -95,6 +107,6 @@ export async function runConceptArtCommand(
     });
   }
   usage(
-    'concept-art needs status, routes, save-route <id> <openai-chat|openai-images> <credentialRef> <model> [--key-stdin], lock-route <chat|concept-art> <instanceId> <model>, open <bot>, styles <session>, generate-style <session> <ref>, request, resume <session> <key>, cancel <session> <key>, or accept <session> <key> <context-version>.',
+    'concept-art needs status, routes, accounts, bind-account <chat|image> <provider> <model>, save-route <id> <openai-chat|openai-images> <credentialRef> <model> [--key-stdin], lock-route <chat|concept-art> <instanceId> <model>, open <bot>, styles <session>, generate-style <session> <ref>, request, resume <session> <key>, cancel <session> <key>, or accept <session> <key> <context-version>.',
   );
 }

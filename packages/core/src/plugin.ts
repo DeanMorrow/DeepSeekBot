@@ -201,6 +201,7 @@ import {
   syncBotDescriptor,
 } from './bots/bot-descriptor-sync.js';
 import { createModelPresetStore, type ModelPresetStore } from './models/presets.js';
+import { readApiyiAccounts } from './models/apiyi-account.js';
 import { createModelCatalog } from './models/catalog.js';
 import { createConceptArtConsumer, conceptArtMediaLimits } from './models/concept-art-consumer.js';
 import { createCredentialSecretStore } from './models/credential-secret-store.js';
@@ -2895,6 +2896,23 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
     voiceProviders: core.voiceProviders,
     conceptArt: core.conceptArt,
     sharedRoute: core.sharedRoute,
+    apiyiAccounts: () =>
+      readApiyiAccounts({
+        providers: ctx.llm.listConfigurableProviders(),
+        settings:
+          (
+            ctx.get('settings') as
+              | { describe(options: { redactSecrets: boolean }): { ns: string; value: unknown }[] }
+              | undefined
+          )?.describe({ redactSecrets: true }) ?? [],
+        configured: async (ref) => {
+          const credentials = ctx.get('credentials') as
+            | { describe(ref: string): Promise<{ configured: boolean }> }
+            | undefined;
+          if (!credentials) throw new Error('Native credentials service is unavailable');
+          return (await credentials.describe(ref)).configured;
+        },
+      }),
     voiceLog: (phase, fields) => diagnosticEvents.record('voice', phase, fields),
     prompts: core.prompts,
     botContext: async (slug) => {

@@ -1179,6 +1179,7 @@ export interface BridgeMethodsDeps {
   voiceProviders?: VoiceProviders;
   conceptArt?: Parameters<typeof createConceptArtBridge>[0]['conceptArt'];
   sharedRoute?: Parameters<typeof createConceptArtBridge>[0]['sharedRoute'];
+  apiyiAccounts?: Parameters<typeof createConceptArtBridge>[0]['apiyiAccounts'];
   voiceLog?: (phase: string, fields: Record<string, string | number>) => void;
   botContext?(slug: string): Promise<BotContextWindow>;
   botSystemPrompt?(slug: string): Promise<BotSystemPromptView>;
@@ -2299,6 +2300,7 @@ export function createBridgeMethods(deps: BridgeMethodsDeps): BridgeMethods {
       return createConceptArtBridge({
         ...(deps.conceptArt === undefined ? {} : { conceptArt: deps.conceptArt }),
         ...(deps.sharedRoute === undefined ? {} : { sharedRoute: deps.sharedRoute }),
+        ...(deps.apiyiAccounts === undefined ? {} : { apiyiAccounts: deps.apiyiAccounts }),
         ...(deps.attachments === undefined ? {} : { attachments: deps.attachments }),
         sessionForBot: (botSlug) =>
           deps.runtime?.ensureOrchestratorSessionId?.(botSlug) ??

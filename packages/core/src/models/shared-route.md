@@ -12,6 +12,8 @@ API易按协议使用不同基址，不能收成一个全局 `/v1`：
 
 存下的密钥不证明令牌分组已开通该型号。多个实例可以引用同一个 `credentialRef`，消费端不再保存一份密钥。
 
+概念图聊天和图像的手选读取 DSH「模型」页已经保存的 API易 提供方（`llm-pi-ai` 的 `providers`、`baseURL`、`api`、`apiKeyEnv` 和模型名单），经 `listConfigurableProviders` 与 `settings.describe` 找到那一份。绑定只引用 `apiKeyEnv`，不调用 `credentials.set`，也不改 Host 默认路由。`openai-completions` 且基址正好是 `https://api.apiyi.com/v1` 才作为概念图聊天的 `openai-chat`；`anthropic-messages` 且基址正好是 `https://api.apiyi.com` 才作为概念图聊天的 `anthropic-messages`。`openai-responses` 不改写成聊天补全。图像锁始终是独立的 `openai-images`。名单是用户写在模型页上的名字，不是供应商核验。DeepSeek 官方提供方和 `DEEPSEEK_API_KEY` 不进入这份账户。基址不是 `api.apiyi.com` 的聊天提供方保持原样。
+
 型号必须写进该实例的 allowlist。没有默认启用的型号。Kimi 走 `gateway: official` 和调用方给出的 https 基址，不会因为官网有这个型号就从 API易 发出。
 
 手选锁优先。没有锁时，Auto 只在同一能力下恰好一个已配置实例、且该实例恰好一个型号时成功。多个供应商或多个型号返回 `auto-ambiguous`。没有密钥返回 `credential-missing`。聊天不能提交图像或视频，概念图不能提交聊天。

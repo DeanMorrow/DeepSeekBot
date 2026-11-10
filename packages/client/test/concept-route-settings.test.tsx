@@ -15,11 +15,11 @@ afterEach(() => {
 
 const t = ((key: string) => key) as BotHarnessTranslate;
 
-it('says what to fill when the model name is empty and does not save', async () => {
+it('asks for the DSH Models page account and does not open a second key field', async () => {
   const sent: Record<string, unknown>[] = [];
   const conceptArt: BridgeActions['conceptArt'] = async (payload) => {
     sent.push(payload);
-    return { protocols: [], instances: [], chat: { locked: false }, image: { locked: false } };
+    return { accounts: [], chat: { locked: false }, image: { locked: false } };
   };
   const host = document.createElement('div');
   document.body.append(host);
@@ -29,66 +29,43 @@ it('says what to fill when the model name is empty and does not save', async () 
     root.render(createElement(ConceptRouteSettings, { conceptArt, t }));
     await Promise.resolve();
   });
-  const save = [...host.querySelectorAll('button')].find(
-    (button) => button.textContent === 'conceptRoute.save',
-  ) as HTMLButtonElement;
-  await act(async () => {
-    save.click();
-    await Promise.resolve();
-  });
-  expect(host.textContent).toContain('conceptRoute.needFields');
-  expect(sent.some((item) => item['action'] === 'saveRoute')).toBe(false);
-  expect(save.disabled).toBe(false);
+  expect(host.textContent).toContain('conceptRoute.needAccount');
+  expect(host.querySelector('input')).toBeNull();
+  expect(host.querySelector('input[type="password"]')).toBeNull();
+  expect(
+    sent.some((item) => item['action'] === 'saveRoute' || item['action'] === 'bindAccount'),
+  ).toBe(false);
 });
 
-it('locks a saved model and does not ask for a key that is already stored', async () => {
+it('locks chat and image from the same account without sending a key', async () => {
   const sent: Record<string, unknown>[] = [];
-  let configured = false;
+  let chat = '';
+  let image = '';
   const conceptArt: BridgeActions['conceptArt'] = async (payload) => {
     sent.push(payload);
     const body = payload as {
       action?: string;
-      route?: { key?: string; models?: string[] };
-      lock?: { model?: string };
+      bind?: { capability?: string; model?: string; key?: string };
     };
-    if (body.action === 'saveRoute') {
-      if (body.route?.key === undefined) {
-        const error = new Error('That credential reference has no key.');
-        (error as { code?: string }).code = 'credential-missing';
-        throw error;
-      }
-      configured = true;
-      expect(body.route.key).toBe('sk-isolated-test');
-      return { credentialConfigured: true, models: body.route.models };
+    if (body.action === 'bindAccount') {
+      expect(body.bind?.key).toBeUndefined();
+      if (body.bind?.capability === 'chat') chat = body.bind.model ?? '';
+      if (body.bind?.capability === 'image') image = body.bind.model ?? '';
     }
-    if (body.action === 'lockRoute') return { locked: true, model: body.lock?.model };
     return {
-      protocols: [
-        { protocol: 'openai-chat', capability: 'chat', baseUrl: 'https://api.apiyi.com/v1' },
-        { protocol: 'openai-images', capability: 'image', baseUrl: 'https://api.apiyi.com/v1' },
+      accounts: [
+        {
+          provider: 'apiyi-studio',
+          displayName: 'API易',
+          credentialRef: 'APIYI_STUDIO_API_KEY',
+          credentialConfigured: true,
+          models: ['chat-a', 'chat-b', 'image-a'],
+          chatProtocol: 'openai-chat',
+          baseUrl: 'https://api.apiyi.com/v1',
+        },
       ],
-      instances: configured
-        ? [
-            {
-              id: 'openai-chat-apiyi-account',
-              capability: 'chat',
-              protocol: 'openai-chat',
-              baseUrl: 'https://api.apiyi.com/v1',
-              models: ['vendor-chat-a'],
-              credentialRef: 'apiyi-account',
-              credentialConfigured: true,
-            },
-          ]
-        : [],
-      chat: configured
-        ? {
-            locked: true,
-            providerId: 'openai-chat-apiyi-account',
-            model: 'vendor-chat-a',
-            credentialConfigured: true,
-          }
-        : { locked: false },
-      image: { locked: false },
+      chat: { locked: chat !== '', model: chat, credentialConfigured: true },
+      image: { locked: image !== '', model: image, credentialConfigured: true },
     };
   };
   const host = document.createElement('div');
@@ -99,47 +76,27 @@ it('locks a saved model and does not ask for a key that is already stored', asyn
     root.render(createElement(ConceptRouteSettings, { conceptArt, t }));
     await Promise.resolve();
   });
-  expect(host.textContent).toContain('conceptRoute.chat');
+  expect(host.textContent).toContain('APIYI_STUDIO_API_KEY');
   expect(host.querySelector('input[type="password"]')).toBeNull();
-  const fields = [...host.querySelectorAll('input')];
-  const ref = fields.find(
-    (field) => field.getAttribute('aria-label') === 'conceptRoute.credentialRef',
-  );
-  const model = fields.find(
-    (field) => field.getAttribute('aria-label') === 'conceptRoute.modelName',
-  );
-  const setValue = (field: HTMLInputElement, value: string) => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    setter?.call(field, value);
-    field.dispatchEvent(new Event('input', { bubbles: true }));
-    field.dispatchEvent(new Event('change', { bubbles: true }));
+  const choose = async (label: string, model: string) => {
+    const select = host.querySelector(`select[aria-label="${label}"]`) as HTMLSelectElement;
+    await act(async () => {
+      select.value = model;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
   };
-  const save = [...host.querySelectorAll('button')].find(
-    (button) => button.textContent === 'conceptRoute.save',
-  ) as HTMLButtonElement;
-  await act(async () => {
-    setValue(ref as HTMLInputElement, 'apiyi-account');
-    setValue(model as HTMLInputElement, 'vendor-chat-a');
-  });
-  await act(async () => {
-    save.click();
-    await Promise.resolve();
-  });
-  expect(host.querySelector('input[type="password"]')).not.toBeNull();
-  const secret = host.querySelector('input[type="password"]') as HTMLInputElement;
-  await act(async () => {
-    setValue(secret, 'sk-isolated-test');
-  });
-  await act(async () => {
-    save.click();
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  expect(host.querySelector('input[type="password"]')).toBeNull();
-  expect(host.textContent).toContain('conceptRoute.keyKept');
-  expect(
-    sent.some(
-      (item) => JSON.stringify(item).includes('sk-isolated-test') && item['action'] !== 'saveRoute',
-    ),
-  ).toBe(false);
+  await choose('conceptRoute.chat', 'chat-b');
+  await choose('conceptRoute.image', 'image-a');
+  expect(sent.filter((item) => item['action'] === 'bindAccount')).toEqual([
+    {
+      action: 'bindAccount',
+      bind: { capability: 'chat', provider: 'apiyi-studio', model: 'chat-b' },
+    },
+    {
+      action: 'bindAccount',
+      bind: { capability: 'image', provider: 'apiyi-studio', model: 'image-a' },
+    },
+  ]);
+  expect(JSON.stringify(sent)).not.toContain('sk-');
 });
