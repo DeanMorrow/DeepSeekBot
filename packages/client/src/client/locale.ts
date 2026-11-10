@@ -1192,6 +1192,8 @@ export const zh = {
   'conceptRoute.needAccount':
     '先在 DSH「模型」页保存一次 API易 提供方、凭证和模型。概念图只读取那份凭证引用，不另存密钥，也不改 Host 默认模型。',
   'conceptRoute.sameRef': '聊天和图像使用同一凭证引用。手选优先。这里不改 Host 默认模型。',
+  'conceptRoute.savedLock': '已生效的锁还在，当前账户没有保存。',
+  'conceptRoute.refMissing': '这个账户没有凭证引用。',
   'conceptRoute.modelName': '模型名单',
   'conceptRoute.allowlist': '名单来自 DSH「模型」页里你保存的名字，不是供应商权限或额度核验。',
   'conceptRoute.credentialRef': '凭证引用',
@@ -6060,6 +6062,8 @@ export const en = {
     'Save the API易 provider, credential, and models once on the DSH Models page. Concept art reads that credential reference. It does not store a second key or change the Host default model.',
   'conceptRoute.sameRef':
     'Chat and image use the same credential reference. Your selection wins. This does not change the Host default model.',
+  'conceptRoute.savedLock': 'The saved lock is unchanged. This account is not saved yet.',
+  'conceptRoute.refMissing': 'This account has no credential reference.',
   'conceptRoute.modelName': 'Model list',
   'conceptRoute.allowlist':
     'These names are the ones you saved on the DSH Models page. They are not a provider permission or quota check.',

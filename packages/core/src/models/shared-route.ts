@@ -31,6 +31,9 @@ export interface PublicInstance {
   models: string[];
   credentialRef: string;
   credentialConfigured: boolean;
+  accountProvider?: string;
+  accountBaseUrl?: string;
+  accountApi?: string;
   /** A stored key does not prove the token group covers this model. */
   groupCoverage: 'unverified';
 }
@@ -44,6 +47,10 @@ export interface InstanceSpec {
   baseUrl: string;
   models: readonly string[];
   credentialRef: string;
+  /** Present when the row was bound from a DSH Models-page account. */
+  accountProvider?: string;
+  accountBaseUrl?: string;
+  accountApi?: string;
 }
 
 const APIYI_OPENAI = 'https://api.apiyi.com/v1';
@@ -209,6 +216,9 @@ export function createSharedModelRoute(
     models: [...stored.models],
     credentialRef: stored.credentialRef,
     credentialConfigured: await secrets.configured(stored.credentialRef),
+    ...(stored.accountProvider === undefined ? {} : { accountProvider: stored.accountProvider }),
+    ...(stored.accountBaseUrl === undefined ? {} : { accountBaseUrl: stored.accountBaseUrl }),
+    ...(stored.accountApi === undefined ? {} : { accountApi: stored.accountApi }),
     groupCoverage: 'unverified',
   });
 
@@ -472,6 +482,9 @@ export function createSharedModelRoute(
         baseUrl: spec.baseUrl.trim(),
         models: [...new Set(spec.models.map((model) => cleanId(model, 'Model')))],
         credentialRef: acceptedCredentialRef(spec.credentialRef),
+        ...(spec.accountProvider === undefined ? {} : { accountProvider: spec.accountProvider }),
+        ...(spec.accountBaseUrl === undefined ? {} : { accountBaseUrl: spec.accountBaseUrl }),
+        ...(spec.accountApi === undefined ? {} : { accountApi: spec.accountApi }),
         createdAt: now(),
       };
       assertProtocol(stored);
@@ -483,7 +496,10 @@ export function createSharedModelRoute(
           previous.capability !== stored.capability ||
           previous.protocol !== stored.protocol ||
           previous.baseUrl !== stored.baseUrl ||
-          previous.credentialRef !== stored.credentialRef
+          previous.credentialRef !== stored.credentialRef ||
+          previous.accountProvider !== stored.accountProvider ||
+          previous.accountBaseUrl !== stored.accountBaseUrl ||
+          previous.accountApi !== stored.accountApi
         ) {
           throw new SharedRouteError(
             'instance-identity-mismatch',
@@ -554,6 +570,15 @@ export function createSharedModelRoute(
         model: lock.model,
         credentialConfigured:
           instance !== undefined && (await secrets.configured(instance.credentialRef)),
+        credentialRef: instance?.credentialRef ?? null,
+        protocol: instance?.protocol ?? null,
+        baseUrl: instance?.baseUrl ?? null,
+        accountProvider:
+          instance?.accountProvider ??
+          /^apiyi-(.+)-(?:chat|image)$/u.exec(lock.provider_id)?.[1] ??
+          null,
+        accountBaseUrl: instance?.accountBaseUrl ?? null,
+        accountApi: instance?.accountApi ?? null,
         groupCoverage: 'unverified' as const,
         catalog: 'not-the-image-route' as const,
       };

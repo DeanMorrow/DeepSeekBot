@@ -1121,6 +1121,7 @@ export function createCore(
     ownership,
     route: sharedRoute,
     limits: conceptArtMediaLimits(),
+    describeLock: (consumer, capability) => sharedRoute.describeConsumer(consumer, capability),
   });
   const voiceProviders = new VoiceProviders({
     database: attachOperationalModule(operationalDatabase, 'voice'),
@@ -2890,29 +2891,31 @@ export function apply(ctx: Context, config: BotHarnessConfig): void {
     drafts: shareDrafts,
     log: (event) => ctx.logger.info(JSON.stringify(event)),
   });
+  const apiyiAccounts = () =>
+    readApiyiAccounts({
+      providers: ctx.llm.listConfigurableProviders(),
+      settings:
+        (
+          ctx.get('settings') as
+            | { describe(options: { redactSecrets: boolean }): { ns: string; value: unknown }[] }
+            | undefined
+        )?.describe({ redactSecrets: true }) ?? [],
+      configured: async (ref) => {
+        const credentials = ctx.get('credentials') as
+          | { describe(ref: string): Promise<{ configured: boolean }> }
+          | undefined;
+        if (!credentials) throw new Error('Native credentials service is unavailable');
+        return (await credentials.describe(ref)).configured;
+      },
+    });
+  core.conceptArt.useAccounts(apiyiAccounts);
   const bridgeMethods = createBridgeMethods({
     catalogSourcePath: join(dshHome, 'botharness', 'catalog-source.json'),
     catalogSession,
     voiceProviders: core.voiceProviders,
     conceptArt: core.conceptArt,
     sharedRoute: core.sharedRoute,
-    apiyiAccounts: () =>
-      readApiyiAccounts({
-        providers: ctx.llm.listConfigurableProviders(),
-        settings:
-          (
-            ctx.get('settings') as
-              | { describe(options: { redactSecrets: boolean }): { ns: string; value: unknown }[] }
-              | undefined
-          )?.describe({ redactSecrets: true }) ?? [],
-        configured: async (ref) => {
-          const credentials = ctx.get('credentials') as
-            | { describe(ref: string): Promise<{ configured: boolean }> }
-            | undefined;
-          if (!credentials) throw new Error('Native credentials service is unavailable');
-          return (await credentials.describe(ref)).configured;
-        },
-      }),
+    apiyiAccounts,
     voiceLog: (phase, fields) => diagnosticEvents.record('voice', phase, fields),
     prompts: core.prompts,
     botContext: async (slug) => {

@@ -6,7 +6,7 @@ export const CONCEPT_ART_COMMANDS = [
   {
     command: 'concept-art',
     description:
-      'call the Host concept-art bridge: status, routes, accounts, bind-account, save-route, lock-route, styles, generate-style, request (JSON on stdin), resume, cancel, or accept. bind-account uses the DSH Models-page credential reference and does not take a key. A key is read from stdin only for save-route when that separate reference is not already stored.',
+      'call the Host concept-art bridge: status, routes, accounts, bind-account, save-route, lock-route, styles, generate-style, request (JSON on stdin), resume, cancel, or accept. bind-account uses the DSH Models-page credential reference and does not take a key. When that page is readable, save-route refuses --key-stdin and does not store a new key.',
   },
 ] as const;
 

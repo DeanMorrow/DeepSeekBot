@@ -1,6 +1,6 @@
 import type { AttachmentStore } from '../attachments/store.js';
 import type { ConceptArtRequest, createConceptArtConsumer } from './concept-art-consumer.js';
-import { selectApiyiBinding, type ApiyiAccount } from './apiyi-account.js';
+import { accountLockDrift, selectApiyiBinding, type ApiyiAccount } from './apiyi-account.js';
 import {
   SharedRouteError,
   verifiedApiyiRoute,
@@ -144,6 +144,9 @@ export function createConceptArtBridge(input: {
             baseUrl: verified.baseUrl,
             models: binding.account.models,
             credentialRef: binding.account.credentialRef,
+            accountProvider: binding.account.provider,
+            accountBaseUrl: binding.account.baseUrl,
+            accountApi: binding.account.api,
           });
           input.sharedRoute.lock(binding.consumer, binding.capability, saved.id, binding.model);
           return {
@@ -175,6 +178,38 @@ export function createConceptArtBridge(input: {
           const verified = verifiedApiyiRoute(protocol);
           const key = record['key'];
           if (key !== undefined && typeof key !== 'string') return invalid('Key must be a string.');
+          if (input.apiyiAccounts !== undefined) {
+            if (key !== undefined) {
+              return {
+                ok: false,
+                error: {
+                  code: 'account-key-not-accepted',
+                  message:
+                    'A new key is stored on the DSH Models page. save-route does not accept one.',
+                },
+              };
+            }
+            const accounts = await input.apiyiAccounts();
+            const models = record['models'] as string[];
+            const match = accounts.find(
+              (item) =>
+                item.credentialRef === record['credentialRef'] &&
+                (protocol === 'openai-images'
+                  ? item.imageProtocol === protocol
+                  : item.chatProtocol === protocol) &&
+                models.every((model) => item.models.includes(model)),
+            );
+            if (match === undefined) {
+              return {
+                ok: false,
+                error: {
+                  code: 'account-mismatch',
+                  message:
+                    'That model is not on a current API易 account. The stored rows were left as they are.',
+                },
+              };
+            }
+          }
           const saved = await input.sharedRoute.saveInstance(
             {
               id: record['id'],
@@ -229,6 +264,29 @@ export function createConceptArtBridge(input: {
                 message: 'That credential reference has no key.',
               },
             };
+          }
+          if (input.apiyiAccounts !== undefined) {
+            const drift = accountLockDrift(await input.apiyiAccounts(), {
+              locked: true,
+              providerId: instance.id,
+              model,
+              credentialRef: instance.credentialRef,
+              protocol: instance.protocol,
+              baseUrl: instance.baseUrl,
+              accountProvider: instance.accountProvider ?? null,
+              accountBaseUrl: instance.accountBaseUrl ?? null,
+              accountApi: instance.accountApi ?? null,
+              capability,
+            });
+            if (drift !== 'ok') {
+              return {
+                ok: false,
+                error: {
+                  code: drift,
+                  message: 'That lock does not match the current API易 account.',
+                },
+              };
+            }
           }
           input.sharedRoute.lock(consumer, capability, instance.id, model);
           const current = await input.sharedRoute.describeConsumer(consumer, capability);

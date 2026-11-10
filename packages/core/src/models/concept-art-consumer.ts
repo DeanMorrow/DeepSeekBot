@@ -9,6 +9,7 @@ import {
   type ImageMime,
 } from '../media/image-format.js';
 import type { SessionOwnership } from '../sessions/ownership.js';
+import { accountLockDrift, type ApiyiAccount } from './apiyi-account.js';
 import { SharedRouteError, type StoredArtifact } from './shared-route.js';
 
 export interface ConceptArtLimits {
@@ -282,10 +283,38 @@ export function createConceptArtConsumer(input: {
   ownership: Pick<SessionOwnership, 'resolve'>;
   route: ConceptRoute;
   limits: ConceptArtLimits | null;
+  accounts?: () => Promise<ApiyiAccount[]>;
+  describeLock?: (
+    consumer: 'concept-art' | 'chat',
+    capability: 'image' | 'chat',
+  ) => Promise<{
+    locked: boolean;
+    providerId?: string | null;
+    model?: string | null;
+    credentialRef?: string | null;
+    protocol?: string | null;
+    baseUrl?: string | null;
+    accountProvider?: string | null;
+    accountBaseUrl?: string | null;
+    accountApi?: string | null;
+  }>;
 }) {
   let submitCalls = 0;
+  let readAccounts = input.accounts;
   const wrapped: ConceptRoute = {
     submit: async (consumer, capability, projectId, idempotencyKey, prompt) => {
+      if (readAccounts !== undefined && input.describeLock !== undefined) {
+        const drift = accountLockDrift(await readAccounts(), {
+          ...(await input.describeLock(consumer, capability)),
+          capability,
+        });
+        if (drift !== 'ok' && drift !== 'unlocked') {
+          throw new SharedRouteError(
+            drift,
+            'The saved lock no longer matches the API易 account on the DSH Models page.',
+          );
+        }
+      }
       submitCalls += 1;
       return input.route.submit(consumer, capability, projectId, idempotencyKey, prompt);
     },
@@ -466,6 +495,9 @@ export function createConceptArtConsumer(input: {
   };
 
   return {
+    useAccounts(reader: () => Promise<ApiyiAccount[]>) {
+      readAccounts = reader;
+    },
     submitCount: () => submitCalls,
     limitsConfigured: () => input.limits !== null,
     projectIdFor: (sessionId: string | null) => sessionProjectId(input.ownership, sessionId),

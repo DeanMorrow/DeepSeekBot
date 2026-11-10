@@ -75,6 +75,67 @@ async function oneAccount(
   };
 }
 
+export function accountProviderFromInstanceId(
+  id: string,
+): { provider: string; capability: 'chat' | 'image' } | undefined {
+  const match = /^apiyi-(.+)-(chat|image)$/u.exec(id);
+  if (match === null) return undefined;
+  return {
+    provider: match[1] ?? '',
+    capability: match[2] === 'image' ? 'image' : 'chat',
+  };
+}
+
+/** Why a saved lock no longer matches the live Models-page account. `ok` does not call the provider. */
+export function accountLockDrift(
+  accounts: readonly ApiyiAccount[],
+  lock: {
+    locked: boolean;
+    providerId?: string | null;
+    model?: string | null;
+    credentialRef?: string | null;
+    protocol?: string | null;
+    baseUrl?: string | null;
+    accountProvider?: string | null;
+    accountBaseUrl?: string | null;
+    accountApi?: string | null;
+    capability: 'chat' | 'image';
+  },
+): string {
+  if (!lock.locked || lock.model == null || lock.model === '') return 'unlocked';
+  const parsed =
+    lock.providerId == null ? undefined : accountProviderFromInstanceId(lock.providerId);
+  const provider = lock.accountProvider ?? parsed?.provider;
+  if (provider !== undefined && provider !== '') {
+    const account = accounts.find((item) => item.provider === provider);
+    if (account === undefined) return 'account-gone';
+    if (account.credentialRef === '') return 'credential-ref-missing';
+    if (account.credentialRef === OFFICIAL_DEEPSEEK_KEY) return 'official-key-not-apiyi';
+    if (account.credentialRef !== lock.credentialRef) return 'credential-ref-changed';
+    if (lock.accountBaseUrl != null && account.baseUrl !== lock.accountBaseUrl)
+      return 'base-changed';
+    if (lock.accountApi != null && account.api !== lock.accountApi) return 'protocol-changed';
+    const expected = lock.capability === 'image' ? account.imageProtocol : account.chatProtocol;
+    if (expected == null || expected !== lock.protocol) return 'protocol-changed';
+    if (lock.capability === 'chat' && account.baseUrl !== lock.baseUrl) return 'base-changed';
+    if (!account.models.includes(lock.model)) return 'model-not-on-account';
+    if (!account.credentialConfigured) return 'credential-missing';
+    return 'ok';
+  }
+  const legacy = accounts.filter(
+    (item) =>
+      item.credentialRef !== '' &&
+      item.credentialRef === lock.credentialRef &&
+      item.baseUrl === lock.baseUrl &&
+      (lock.capability === 'image'
+        ? item.imageProtocol === lock.protocol
+        : item.chatProtocol === lock.protocol) &&
+      item.models.includes(lock.model ?? ''),
+  );
+  if (legacy.length === 1) return 'ok';
+  return legacy.length > 1 ? 'account-ambiguous' : 'account-stale';
+}
+
 export function selectApiyiBinding(
   accounts: readonly ApiyiAccount[],
   input: { provider: string; model: string; capability: 'chat' | 'image' },
@@ -93,10 +154,16 @@ export function selectApiyiBinding(
       'That provider is not an API易 account on the DSH Models page.',
     );
   }
-  if (account.credentialRef === '' || account.credentialRef === OFFICIAL_DEEPSEEK_KEY) {
+  if (account.credentialRef === OFFICIAL_DEEPSEEK_KEY) {
     throw new SharedRouteError(
       'official-key-not-apiyi',
       'Concept art does not use the DeepSeek official key.',
+    );
+  }
+  if (account.credentialRef === '') {
+    throw new SharedRouteError(
+      'credential-ref-missing',
+      'This API易 account has no credential reference. Set it on the DSH Models page.',
     );
   }
   if (!account.models.includes(input.model)) {

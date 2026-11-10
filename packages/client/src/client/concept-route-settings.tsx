@@ -18,6 +18,9 @@ type LockView = {
   locked?: boolean;
   model?: string | null;
   credentialConfigured?: boolean;
+  accountProvider?: string | null;
+  credentialRef?: string | null;
+  protocol?: string | null;
 };
 
 type RoutesView = {
@@ -47,11 +50,17 @@ export function ConceptRouteSettings({
       const next = viewOf(value);
       setRoutes(next);
       const accounts = next.accounts ?? [];
-      setProvider((current) =>
-        accounts.some((item) => item.provider === current)
-          ? current
-          : (accounts[0]?.provider ?? ''),
-      );
+      setProvider((current) => {
+        if (current !== '' && accounts.some((item) => item.provider === current)) return current;
+        const locked = next.chat?.accountProvider ?? next.image?.accountProvider;
+        if (
+          locked !== undefined &&
+          locked !== null &&
+          accounts.some((item) => item.provider === locked)
+        )
+          return locked;
+        return accounts[0]?.provider ?? '';
+      });
     });
   };
 
@@ -61,6 +70,17 @@ export function ConceptRouteSettings({
 
   const accounts = routes.accounts ?? [];
   const account = accounts.find((item) => item.provider === provider);
+  const savedOnAccount = (lock: LockView | undefined, models: string[]): boolean =>
+    lock?.locked === true &&
+    lock.accountProvider === account?.provider &&
+    lock.credentialRef === account?.credentialRef &&
+    lock.model != null &&
+    models.includes(lock.model);
+  const savedText = (lock: LockView | undefined, onAccount: boolean): string => {
+    if (lock?.locked !== true || lock.model == null) return t('conceptRoute.empty');
+    if (onAccount) return lock.model;
+    return `${t('conceptRoute.savedLock')} ${lock.accountProvider ?? ''} / ${lock.model}`;
+  };
   const bind = (capability: 'chat' | 'image', model: string): void => {
     if (conceptArt === undefined || account === undefined || model === '') return;
     void conceptArt({
@@ -111,15 +131,21 @@ export function ConceptRouteSettings({
         )}
       </SettingsRow>
       <SettingsRow title={t('conceptRoute.credentialRef')} description={t('conceptRoute.keyKept')}>
-        <span>{account?.credentialRef || t('conceptRoute.empty')}</span>
+        <span>
+          {account?.credentialRef === ''
+            ? t('conceptRoute.refMissing')
+            : (account?.credentialRef ?? t('conceptRoute.empty'))}
+        </span>
       </SettingsRow>
       <SettingsRow
         title={t('conceptRoute.chat')}
-        description={routes.chat?.model ?? t('conceptRoute.empty')}
+        description={savedText(routes.chat, savedOnAccount(routes.chat, account?.models ?? []))}
       >
         <select
           aria-label={t('conceptRoute.chat')}
-          value={routes.chat?.model ?? ''}
+          value={
+            savedOnAccount(routes.chat, account?.models ?? []) ? (routes.chat?.model ?? '') : ''
+          }
           disabled={account?.chatProtocol == null}
           onChange={(event) => bind('chat', event.target.value)}
         >
@@ -133,11 +159,13 @@ export function ConceptRouteSettings({
       </SettingsRow>
       <SettingsRow
         title={t('conceptRoute.image')}
-        description={routes.image?.model ?? t('conceptRoute.empty')}
+        description={savedText(routes.image, savedOnAccount(routes.image, account?.models ?? []))}
       >
         <select
           aria-label={t('conceptRoute.image')}
-          value={routes.image?.model ?? ''}
+          value={
+            savedOnAccount(routes.image, account?.models ?? []) ? (routes.image?.model ?? '') : ''
+          }
           onChange={(event) => bind('image', event.target.value)}
         >
           <option value="">{t('conceptRoute.empty')}</option>
