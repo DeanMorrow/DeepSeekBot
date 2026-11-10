@@ -1348,6 +1348,8 @@ export class BotharnessBridgeService extends TypertRemoteService {
     action:
       | 'status'
       | 'routes'
+      | 'accounts'
+      | 'bindAccount'
       | 'saveRoute'
       | 'lockRoute'
       | 'open'
@@ -1392,6 +1394,7 @@ export class BotharnessBridgeService extends TypertRemoteService {
       key?: string;
     },
     lock?: { consumer: 'chat' | 'concept-art'; instanceId: string; model: string },
+    bind?: { capability: 'chat' | 'image'; provider: string; model: string },
   ): Promise<unknown> {
     return unwrapAsync(
       this.methods.conceptArt({
@@ -1405,6 +1408,7 @@ export class BotharnessBridgeService extends TypertRemoteService {
         ...(request === undefined ? {} : { request }),
         ...(route === undefined ? {} : { route }),
         ...(lock === undefined ? {} : { lock }),
+        ...(bind === undefined ? {} : { bind }),
       }),
     );
   }
