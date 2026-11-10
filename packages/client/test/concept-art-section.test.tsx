@@ -3,7 +3,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, expect, it } from 'vitest';
 
-import { ConceptArtSection } from '../src/client/concept-art-section.js';
+import { ConceptArtSection, resetConceptArtLease } from '../src/client/concept-art-section.js';
 import type { BridgeCall } from '../src/client/bridge.js';
 import type { BotHarnessTranslate } from '../src/client/locale.js';
 
@@ -11,6 +11,7 @@ const roots: Root[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) root.unmount();
   document.body.replaceChildren();
+  resetConceptArtLease();
 });
 
 const t = ((key: string) => key) as BotHarnessTranslate;
@@ -282,4 +283,95 @@ it('unlocks confirmation after a rejection and does not send it again until the 
   });
   expect(confirmations).toBe(2);
   expect(confirmButton()).toBeUndefined();
+});
+
+it('uses one consumer for two open sections and cancels the held proposal when the Bot changes', async () => {
+  const sent: { action?: string; botSlug?: string; idempotencyKey?: string }[] = [];
+  const call: BridgeCall = async (_endpoint, payload) => {
+    const body = payload as {
+      action?: string;
+      botSlug?: string;
+      idempotencyKey?: string;
+      request?: { confirmedPrompt?: string };
+    };
+    sent.push(body);
+    if (body.action === 'status') {
+      return { ok: true, value: { locked: true, credentialConfigured: true, chatReady: true } };
+    }
+    if (body.action === 'open') return { ok: true, value: { sessionId: 'session-1' } };
+    if (body.action === 'styles') return { ok: true, value: { styles: [], unassignedCount: 0 } };
+    if (body.action === 'cancel') return { ok: true, value: { artifact: null } };
+    if (body.request?.confirmedPrompt !== undefined) {
+      return {
+        ok: true,
+        value: { status: 'ALLOWED', idempotencyKey: 'held-1', userVisible: false },
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        status: 'NEEDS_CONFIRMATION',
+        proposedPrompt: 'added people',
+        idempotencyKey: 'held-1',
+      },
+    };
+  };
+  const render = (host: HTMLElement, bot: string) => {
+    const root = createRoot(host);
+    roots.push(root);
+    return root;
+  };
+  const older = document.createElement('div');
+  const newer = document.createElement('div');
+  document.body.append(older, newer);
+  const olderRoot = render(older, 'ada');
+  const newerRoot = render(newer, 'ada');
+  await act(async () => {
+    olderRoot.render(createElement(ConceptArtSection, { call, t, botSlug: 'ada' }));
+    newerRoot.render(createElement(ConceptArtSection, { call, t, botSlug: 'ada' }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const typeRaw = async (host: HTMLElement) => {
+    const field = host.querySelector('textarea');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(field, '码头的人');
+      field?.dispatchEvent(new Event('input', { bubbles: true }));
+      field?.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
+  const click = async (host: HTMLElement, label: string) => {
+    const button = [...host.querySelectorAll('button')].find(
+      (item) => item.textContent === label,
+    ) as HTMLButtonElement | undefined;
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return button;
+  };
+  await typeRaw(older);
+  await click(older, 'conceptArt.make');
+  expect(sent.filter((item) => item.action === 'request')).toHaveLength(0);
+  await typeRaw(newer);
+  await click(newer, 'conceptArt.make');
+  expect(sent.filter((item) => item.action === 'request')).toHaveLength(1);
+  await act(async () => {
+    newerRoot.render(createElement(ConceptArtSection, { call, t, botSlug: 'bee' }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(sent.some((item) => item.action === 'cancel' && item.idempotencyKey === 'held-1')).toBe(
+    true,
+  );
+  await click(older, 'conceptArt.confirm');
+  await click(newer, 'conceptArt.confirm');
+  expect(
+    sent.filter(
+      (item) =>
+        (item as { request?: { confirmedPrompt?: string } }).request?.confirmedPrompt !== undefined,
+    ),
+  ).toHaveLength(0);
 });

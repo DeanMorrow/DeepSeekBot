@@ -88,6 +88,44 @@ function viewOf(value: unknown): Verdict & StatusView {
   return typeof value === 'object' && value !== null ? (value as Verdict & StatusView) : {};
 }
 
+type ArtLease = {
+  id: number;
+  bot: string;
+  session: string | null;
+  key: string | null;
+  cancel: () => void;
+};
+
+let artLease: ArtLease | null = null;
+let artLeaseSeq = 0;
+
+/** Test isolation. A mounted section replaces any older lease for its Bot. */
+export function resetConceptArtLease(): void {
+  artLease = null;
+  artLeaseSeq = 0;
+}
+
+function takeArtLease(bot: string): number {
+  if (typeof artLease?.key === 'string' && typeof artLease.session === 'string') artLease.cancel();
+  const id = ++artLeaseSeq;
+  artLease = { id, bot, session: null, key: null, cancel: () => undefined };
+  return id;
+}
+
+function artLeaseOwns(id: number): boolean {
+  return artLease?.id === id;
+}
+
+function noteArtLease(
+  id: number,
+  session: string | null,
+  key: string | null,
+  cancel: () => void,
+): void {
+  if (artLease?.id !== id) return;
+  artLease = { id, bot: artLease.bot, session, key, cancel };
+}
+
 export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   const [ready, setReady] = useState(false);
   const [note, setNote] = useState(t('conceptArt.notReady'));
@@ -104,6 +142,7 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   const [proposed, setProposed] = useState('');
   const [preview, setPreview] = useState('');
   const confirming = useRef(false);
+  const leaseId = useRef(0);
   const [held, setHeld] = useState<{
     id: string;
     text: string;
@@ -114,8 +153,18 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
     botSlug: string;
   } | null>(null);
 
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const dropHeld = (id: number, session: string, key: string): void => {
+    if (!artLeaseOwns(id)) return;
+    noteArtLease(id, null, null, () => undefined);
+    void callConceptArt(call, { action: 'cancel', sessionId: session, idempotencyKey: key });
+  };
+
   useEffect(() => {
     let live = true;
+    const id = botSlug === undefined ? 0 : takeArtLease(botSlug);
+    leaseId.current = id;
     setHeld(null);
     setProposed('');
     setPreview('');
@@ -155,6 +204,15 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
       });
     return () => {
       live = false;
+      const pending = heldRef.current;
+      if (artLeaseOwns(id) && pending !== null) {
+        void callConceptArt(call, {
+          action: 'cancel',
+          sessionId: pending.sessionId,
+          idempotencyKey: pending.id,
+        });
+      }
+      if (artLease?.id === id) artLease = null;
     };
   }, [botSlug, call, t]);
 
@@ -188,6 +246,8 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   };
 
   const make = (): void => {
+    const id = leaseId.current;
+    if (botSlug === undefined || !artLeaseOwns(id)) return;
     const idempotencyKey = `concept-${raw.length}-${operationKey ?? 'new'}`;
     void callConceptArt(call, {
       action: 'request',
@@ -209,6 +269,15 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
       },
     }).then((value) => {
       const verdict = viewOf(value);
+      if (!artLeaseOwns(id)) {
+        if (typeof verdict.idempotencyKey === 'string' && sessionId !== null)
+          void callConceptArt(call, {
+            action: 'cancel',
+            sessionId,
+            idempotencyKey: verdict.idempotencyKey,
+          });
+        return;
+      }
       setOperationKey(typeof verdict.idempotencyKey === 'string' ? verdict.idempotencyKey : null);
       if (
         verdict.status === 'NEEDS_CONFIRMATION' &&
@@ -217,7 +286,7 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
         sessionId !== null &&
         botSlug !== undefined
       ) {
-        setHeld({
+        const next = {
           id: verdict.idempotencyKey,
           text: verdict.proposedPrompt,
           raw,
@@ -225,6 +294,14 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
           picked,
           sessionId,
           botSlug,
+        };
+        setHeld(next);
+        noteArtLease(id, sessionId, verdict.idempotencyKey, () => {
+          void callConceptArt(call, {
+            action: 'cancel',
+            sessionId,
+            idempotencyKey: verdict.idempotencyKey as string,
+          });
         });
         setProposed(verdict.proposedPrompt);
       } else {
@@ -252,7 +329,15 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
   };
 
   const confirm = (): void => {
-    if (confirming.current || held === null || sessionId === null || botSlug === undefined) return;
+    const id = leaseId.current;
+    if (
+      confirming.current ||
+      !artLeaseOwns(id) ||
+      held === null ||
+      sessionId === null ||
+      botSlug === undefined
+    )
+      return;
     confirming.current = true;
     if (
       raw !== held.raw ||
@@ -293,6 +378,8 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
     })
       .then((value) => {
         const verdict = viewOf(value);
+        if (!artLeaseOwns(id)) return;
+        noteArtLease(id, null, null, () => undefined);
         setProposed('');
         setHeld(null);
         setPreview(
@@ -394,6 +481,7 @@ export function ConceptArtSection({ call, t, botSlug }: Props): ReactElement {
                 const value = event.target.value;
                 setRaw(value);
                 if (held !== null && held.raw !== value) {
+                  dropHeld(leaseId.current, held.sessionId, held.id);
                   setHeld(null);
                   setProposed('');
                 }

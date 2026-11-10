@@ -78,7 +78,6 @@ import {
   type ChannelComposerActivity,
   type ChannelComposerUpload,
 } from './channel-composer.js';
-import { ConceptArtSection, conceptArtCall } from './concept-art-section.js';
 import { PanelDialog } from './ds/panel-dialog.js';
 import { ConversationSessionStop, useHeaderSessionStop } from './header-session-stop.js';
 import { runningSessionCount, runningSessionGroups } from './session-stop-model.js';
@@ -1123,12 +1122,36 @@ function ConversationView({
   const sidebar = useChannelSidebar(state);
   const docked = useChannelDockActive();
   const workspaceEnabled = useContext(WorkspaceContext) !== undefined;
-  const [detail, setDetail] = useScopedState<'files' | 'inbox' | 'concept' | undefined>(
+  const [detail, setDetail] = useScopedState<'files' | 'inbox' | undefined>(
     scopeKey,
     state.selection?.kind === 'bot' && state.selection.inboxRequest ? 'inbox' : undefined,
   );
   const filesOpen = detail === 'files';
-  const conceptOpen = detail === 'concept';
+  const conceptPanel =
+    dockPanels?.available() === true &&
+    dockPanels.panels().some((panel) => panel.id === 'concept-art')
+      ? dockPanels
+      : undefined;
+  const conceptExpanded =
+    conceptPanel !== undefined
+      ? conceptPanel.isOpen('concept-art')
+      : sidebar.mode !== 'hidden' && sidebar.isEntryExpanded('concept-art');
+  const toggleConcept = (): void => {
+    if (conceptPanel !== undefined) {
+      if (conceptPanel.canOpen?.('concept-art') === false) {
+        conceptPanel.close('concept-art');
+        return;
+      }
+      conceptPanel.toggle('concept-art');
+      return;
+    }
+    if (sidebar.mode === 'hidden') {
+      sidebar.toggle();
+      if (!sidebar.isEntryExpanded('concept-art')) sidebar.toggleEntry('concept-art');
+      return;
+    }
+    sidebar.toggleEntry('concept-art');
+  };
   const inboxOpen = detail === 'inbox';
   const setFilesOpen = (open: boolean) => setDetail(open ? 'files' : undefined);
   const setInboxOpen = (open: boolean) => setDetail(open ? 'inbox' : undefined);
@@ -2859,22 +2882,8 @@ function ConversationView({
                 <span className="bh-channel-island-wrap">
                   <IconButton
                     aria-label={t('botSettings.section.conceptArt')}
-                    aria-expanded={
-                      dockPanels?.available() === true &&
-                      dockPanels.panels().some((panel) => panel.id === 'concept-art')
-                        ? dockPanels.isOpen('concept-art')
-                        : conceptOpen
-                    }
-                    onClick={() => {
-                      if (
-                        dockPanels?.available() === true &&
-                        dockPanels.panels().some((panel) => panel.id === 'concept-art')
-                      ) {
-                        dockPanels.toggle('concept-art');
-                        return;
-                      }
-                      setDetail(conceptOpen ? undefined : 'concept');
-                    }}
+                    aria-expanded={conceptExpanded}
+                    onClick={toggleConcept}
                   >
                     <ChannelSidebarIcon name="flask-conical" />
                   </IconButton>
@@ -3675,22 +3684,8 @@ function ConversationView({
                           {profileBot !== undefined && profileBot.deleted !== true && (
                             <IconButton
                               aria-label={t('botSettings.section.conceptArt')}
-                              aria-expanded={
-                                dockPanels?.available() === true &&
-                                dockPanels.panels().some((panel) => panel.id === 'concept-art')
-                                  ? dockPanels.isOpen('concept-art')
-                                  : conceptOpen
-                              }
-                              onClick={() => {
-                                if (
-                                  dockPanels?.available() === true &&
-                                  dockPanels.panels().some((panel) => panel.id === 'concept-art')
-                                ) {
-                                  dockPanels.toggle('concept-art');
-                                  return;
-                                }
-                                setDetail(conceptOpen ? undefined : 'concept');
-                              }}
+                              aria-expanded={conceptExpanded}
+                              onClick={toggleConcept}
                             >
                               <ChannelSidebarIcon name="flask-conical" />
                             </IconButton>
@@ -3762,25 +3757,6 @@ function ConversationView({
           ) : (
             chatPane
           )}
-          {conceptOpen &&
-            profileBot !== undefined &&
-            !(
-              dockPanels?.available() === true &&
-              dockPanels.panels().some((panel) => panel.id === 'concept-art')
-            ) && (
-              <PanelDialog
-                title={t('botSettings.section.conceptArt')}
-                closeLabel={t('dock.close', { label: t('botSettings.section.conceptArt') })}
-                onClose={() => setDetail(undefined)}
-                scroll
-              >
-                <ConceptArtSection
-                  botSlug={profileBot.slug}
-                  call={conceptArtCall(actions.conceptArt)}
-                  t={t}
-                />
-              </PanelDialog>
-            )}
           {!workspaceEnabled && filesOpen && channelId !== undefined && (
             <PanelDialog
               title={t('generatedFiles.title')}
