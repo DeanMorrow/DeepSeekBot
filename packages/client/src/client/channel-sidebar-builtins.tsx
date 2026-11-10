@@ -48,6 +48,7 @@ import { MemoryEntry } from './memory-entry.js';
 import { MemoryRecovery } from './memory-recovery.js';
 import { cachedMemory, invalidateMemory } from './memory-read-cache.js';
 import { MemoryFilesEntry } from './memory-files-entry.js';
+import { ConceptArtSection, conceptArtCall } from './concept-art-section.js';
 import { Note } from './ds/note.js';
 import { PanelEmptyState } from './ds/empty-state.js';
 import { PanelDialog } from './ds/panel-dialog.js';
@@ -1255,6 +1256,20 @@ export function createChannelSidebarBuiltins(
   function MemoryEvolutionEntry(props: ChannelSidebarEntryProps): ReactElement {
     return <MemoryEntry {...props} showFiles={false} />;
   }
+  function ConceptArtEntry(props: ChannelSidebarEntryProps): ReactElement {
+    if (props.botSlug === undefined) {
+      return (
+        <PanelEmptyState icon="flask-conical">{props.t('conceptArt.notReady')}</PanelEmptyState>
+      );
+    }
+    return (
+      <ConceptArtSection
+        botSlug={props.botSlug}
+        call={conceptArtCall(props.actions.conceptArt)}
+        t={props.t}
+      />
+    );
+  }
   return [
     {
       id: 'memory-files',
@@ -1306,6 +1321,14 @@ export function createChannelSidebarBuiltins(
       scope: 'personabot',
       component: BotSchedulesEntry,
       headerAction: BotSchedulesHeaderAction,
+    },
+    {
+      id: 'concept-art',
+      icon: 'flask-conical',
+      label: t('botSettings.section.conceptArt'),
+      order: 17,
+      scope: 'personabot',
+      component: ConceptArtEntry,
     },
     ...(['personabot', 'channel'] as const).map((scope) => ({
       id: scope === 'personabot' ? 'human-nickname' : 'group-human-nickname',

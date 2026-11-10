@@ -2859,8 +2859,22 @@ function ConversationView({
                 <span className="bh-channel-island-wrap">
                   <IconButton
                     aria-label={t('botSettings.section.conceptArt')}
-                    aria-expanded={conceptOpen}
-                    onClick={() => setDetail(conceptOpen ? undefined : 'concept')}
+                    aria-expanded={
+                      dockPanels?.available() === true &&
+                      dockPanels.panels().some((panel) => panel.id === 'concept-art')
+                        ? dockPanels.isOpen('concept-art')
+                        : conceptOpen
+                    }
+                    onClick={() => {
+                      if (
+                        dockPanels?.available() === true &&
+                        dockPanels.panels().some((panel) => panel.id === 'concept-art')
+                      ) {
+                        dockPanels.toggle('concept-art');
+                        return;
+                      }
+                      setDetail(conceptOpen ? undefined : 'concept');
+                    }}
                   >
                     <ChannelSidebarIcon name="flask-conical" />
                   </IconButton>
@@ -3661,8 +3675,22 @@ function ConversationView({
                           {profileBot !== undefined && profileBot.deleted !== true && (
                             <IconButton
                               aria-label={t('botSettings.section.conceptArt')}
-                              aria-expanded={conceptOpen}
-                              onClick={() => setDetail(conceptOpen ? undefined : 'concept')}
+                              aria-expanded={
+                                dockPanels?.available() === true &&
+                                dockPanels.panels().some((panel) => panel.id === 'concept-art')
+                                  ? dockPanels.isOpen('concept-art')
+                                  : conceptOpen
+                              }
+                              onClick={() => {
+                                if (
+                                  dockPanels?.available() === true &&
+                                  dockPanels.panels().some((panel) => panel.id === 'concept-art')
+                                ) {
+                                  dockPanels.toggle('concept-art');
+                                  return;
+                                }
+                                setDetail(conceptOpen ? undefined : 'concept');
+                              }}
                             >
                               <ChannelSidebarIcon name="flask-conical" />
                             </IconButton>
@@ -3734,20 +3762,25 @@ function ConversationView({
           ) : (
             chatPane
           )}
-          {conceptOpen && profileBot !== undefined && (
-            <PanelDialog
-              title={t('botSettings.section.conceptArt')}
-              closeLabel={t('dock.close', { label: t('botSettings.section.conceptArt') })}
-              onClose={() => setDetail(undefined)}
-              scroll
-            >
-              <ConceptArtSection
-                botSlug={profileBot.slug}
-                call={conceptArtCall(actions.conceptArt)}
-                t={t}
-              />
-            </PanelDialog>
-          )}
+          {conceptOpen &&
+            profileBot !== undefined &&
+            !(
+              dockPanels?.available() === true &&
+              dockPanels.panels().some((panel) => panel.id === 'concept-art')
+            ) && (
+              <PanelDialog
+                title={t('botSettings.section.conceptArt')}
+                closeLabel={t('dock.close', { label: t('botSettings.section.conceptArt') })}
+                onClose={() => setDetail(undefined)}
+                scroll
+              >
+                <ConceptArtSection
+                  botSlug={profileBot.slug}
+                  call={conceptArtCall(actions.conceptArt)}
+                  t={t}
+                />
+              </PanelDialog>
+            )}
           {!workspaceEnabled && filesOpen && channelId !== undefined && (
             <PanelDialog
               title={t('generatedFiles.title')}
